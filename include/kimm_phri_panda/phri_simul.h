@@ -37,7 +37,7 @@ sensor_msgs::JointState base_state_msg_;
 double mujoco_time_, time_, dt;
 bool isgrasp_;
 Eigen::VectorXd franka_qacc_, husky_qacc_, robot_nle_, robot_g_, franka_torque_;
-Eigen::MatrixXd robot_mass_, robot_J_, robot_dJ_;
+Eigen::MatrixXd robot_mass_, robot_J_local_, robot_dJ_local_, robot_J_world_;
 string group_name;
 std_msgs::String sim_run_msg_;
 
@@ -92,10 +92,10 @@ void UpdateMob(){
 
     mob_.torque_d_ = (mob_.gamma_-1.) * mob_.alpha_k_ + mob_.beta_ * (mob_.p_k_ - mob_.gamma_ * mob_.p_k_prev_) + mob_.gamma_ * mob_.torque_d_prev_;
     mob_.mass_inv_ = robot_mass_.inverse();
-    mob_.lambda_inv_ = robot_J_ * mob_.mass_inv_ * robot_J_.transpose();
+    mob_.lambda_inv_ = robot_J_world_ * mob_.mass_inv_ * robot_J_world_.transpose();
     mob_.lambda_ = mob_.lambda_inv_.inverse();
     
-    Eigen::MatrixXd J_trans = robot_J_.transpose();
+    Eigen::MatrixXd J_trans = robot_J_world_.transpose();
     Eigen::MatrixXd J_trans_inv = J_trans.completeOrthogonalDecomposition().pseudoInverse();
 
     mob_.d_force_ = (mob_.mass_inv_ * J_trans *mob_.lambda_).transpose() * mob_.torque_d_;

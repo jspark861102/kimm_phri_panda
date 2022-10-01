@@ -67,13 +67,13 @@ int main(int argc, char **argv)
         // get output
         ctrl_->mass(robot_mass_);
         ctrl_->nle(robot_nle_);
-        ctrl_->g(robot_g_);  
-        ctrl_->g_joint7(robot_g_local_);         
+        ctrl_->g(robot_g_);  // dim model.nv, [Nm]
+        ctrl_->g_joint7(robot_g_local_);  //g [m/s^2] w.r.t joint7 axis
         ctrl_->state(state_);           
 
-        // ctrl_->JWorld(robot_J_);         //world
-        ctrl_->JLocal_offset(robot_J_);     //offset applied ,local
-        ctrl_->dJLocal_offset(robot_dJ_);   //offset applied ,local
+        ctrl_->JWorld(robot_J_world_);            //world
+        ctrl_->JLocal_offset(robot_J_local_);     //offset applied ,local
+        ctrl_->dJLocal_offset(robot_dJ_local_);   //offset applied ,local
 
         // get control input from hqp controller
         ctrl_->franka_output(franka_qacc_); //get control input
@@ -113,11 +113,15 @@ void vel_accel_pub(){
 
     //************* obtained from pinocchio ***********// 
     //**** velocity (data.v) is identical with mujoco velocity, 
-    //**** but acceleration is not reasnoble for both local and global cases.
-    // // ctrl_->velocity_global(vel_param);       //offset applied 
-    // // ctrl_->acceleration_global(acc_param);   //offset applied 
-    // ctrl_->velocity(vel_param);       //offset applied 
-    // ctrl_->acceleration(acc_param);   //offset applied 
+    //**** but acceleration (data.a) is not reasnoble for both local and global cases.
+    // ctrl_->velocity(vel_param);                //offset is applied, LOCAL
+    // ctrl_->acceleration(acc_param);            //offset is applied, LOCAL
+    
+    // ctrl_->velocity_global(vel_param);         //offset is applied, GLOBAL
+    // ctrl_->acceleration_global(acc_param);     //offset is applied, GLOBAL        
+    
+    // ctrl_->velocity_origin(vel_param);         //offset is not applied, GLOBAL  --> if offset is zero, velocity_global = velocity_orign
+    // ctrl_->acceleration(acc_param);            //offset not is applied, GLOBAL  --> if offset is zero, acceleration_global = acceleration_orign    
 
     //************* obtained from mujoco : LOCAL **************//
     vel_param.linear()[0] = v_mujoco[0];
@@ -163,9 +167,9 @@ void vel_accel_pub(){
 void FT_measured_pub() {
     //actually, franka_torque_ is not a measured but command torque, because measurment is not available
     tau_estimated = robot_mass_ * ddq_mujoco + robot_nle_;        
-    tau_ext = franka_torque_ - tau_estimated;        
-    // tau_ext = -franka_torque_ + tau_estimated;        
-    FT_measured = robot_J_.transpose().completeOrthogonalDecomposition().pseudoInverse() * tau_ext;  //robot_J_ is local jacobian      
+    // tau_ext = franka_torque_ - tau_estimated;      // coincide with g(0,0,-9.81)  
+    tau_ext = -franka_torque_ + tau_estimated;        // coincide with g(0,0,9.81)
+    FT_measured = robot_J_local_.transpose().completeOrthogonalDecomposition().pseudoInverse() * tau_ext;  //robot_J_local is local jacobian      
 
     geometry_msgs::Wrench FT_measured_msg;  
     FT_measured_msg.force.x = saturation(FT_measured[0],50);
@@ -182,7 +186,7 @@ void getObjParam(){
     // ************************** object estimation ************************** //
     // *********************************************************************** //
     // mujoco output     : JointStateCallback (motion) : 9 = 7(joint) + 2(gripper)  for pose & velocity & effort, same with rviz jointstate
-    // pinocchio input   : state_.q_, v_, dv_ (motion) : 7 = 7(joint)               for q,v,dv
+    // pinocchio input   : state_.q_, v_      (motion) : 7 = 7(joint)               for q,v
     // controller output : state_.torque_     (torque) : 7 = 7(joint)               for torque, pinocchio doesn't control gripper
     // mujoco input      : robot_command_msg_ (torque) : 9 = 7(joint) + 2(gripper)  robot_command_msg_.torque.resize(9); 
     
@@ -327,11 +331,11 @@ void JointStateCallback(const sensor_msgs::JointState::ConstPtr& msg){
     joint_states_publish(msg_tmp);        
 
     v_mujoco.setZero();
-    a_mujoco.setZero();
+    a_mujoco.setZero();    
     for (int i=0; i<7; i++){ 
         ddq_mujoco[i] = msg_tmp.effort[i];
-        v_mujoco += robot_J_.col(i) * msg_tmp.velocity[i];                                           //jacobian is LOCAL
-        a_mujoco += robot_dJ_.col(i) * msg_tmp.velocity[i] + robot_J_.col(i) * msg_tmp.effort[i];    //jacobian is LOCAL
+        v_mujoco += robot_J_local_.col(i) * msg_tmp.velocity[i];                                                 //jacobian is LOCAL
+        a_mujoco += robot_dJ_local_.col(i) * msg_tmp.velocity[i] + robot_J_local_.col(i) * msg_tmp.effort[i];    //jacobian is LOCAL        
     }        
 
     // Filtering
@@ -339,7 +343,7 @@ void JointStateCallback(const sensor_msgs::JointState::ConstPtr& msg){
     double RC = 1.0 / (cutoff * 2.0 * M_PI);    
     double alpha = dt / (RC + dt);
 
-    a_mujoco_filtered = alpha * a_mujoco + (1 - alpha) * a_mujoco_filtered;
+    a_mujoco_filtered = alpha * a_mujoco + (1 - alpha) * a_mujoco_filtered;        
 }
 
 void joint_states_publish(const sensor_msgs::JointState& msg){

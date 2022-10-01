@@ -48,6 +48,7 @@ typedef struct State {
     VectorXd v_;
     VectorXd dv_;
     VectorXd torque_;
+    VectorXd tau_; //use to calculate ddq
 } state;   
 typedef struct Mob{
     MatrixXd lambda_inv_;
@@ -85,8 +86,10 @@ namespace RobotController{
 
             void initialize();
             void ctrl_update(const int& ); // msg for chaning controller
-            void franka_update(const sensor_msgs::JointState&); // franka state update
-            void franka_update(const Vector7d&, const Vector7d&); // franka state update            
+            void franka_update(const sensor_msgs::JointState&); // franka state update //for simulation
+            void franka_update(const Vector7d&, const Vector7d&); // franka state update //for experiment            
+            void franka_update(const Vector7d& q, const Vector7d& qdot, const Vector7d& tau); // franka state update //for experiment
+
 
             void compute(const double &); // computation by hqp controller
             void franka_output(VectorXd & qacc); // joint torque of franka 

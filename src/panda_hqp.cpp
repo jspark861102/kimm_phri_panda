@@ -44,6 +44,7 @@ namespace RobotController{
         state_.v_.setZero(nv_);
         state_.dv_.setZero(nv_);
         state_.torque_.setZero(na_);
+        state_.tau_.setZero(na_);
 
         // tsid
         tsid_ = std::make_shared<InverseDynamicsFormulationAccForce>("tsid", *robot_);
@@ -132,6 +133,14 @@ namespace RobotController{
         state_.v_.tail(nq_) = qdot;
     }        
 
+    void FrankaWrapper::franka_update(const Vector7d& q, const Vector7d& qdot, const Vector7d& tau){ //for experiment, use pinocchio::aba
+        assert(!issimulation_);
+        state_.q_.tail(nq_) = q;
+        state_.v_.tail(nv_) = qdot;
+
+        state_.tau_.tail(na_) = tau;
+    }        
+
     void FrankaWrapper::ctrl_update(const int& msg){
         ctrl_mode_ = msg;
         ROS_INFO("[ctrltypeCallback] %d", ctrl_mode_);
@@ -142,6 +151,7 @@ namespace RobotController{
         time_ = time;
 
         robot_->computeAllTerms(data_, state_.q_, state_.v_);
+        // robot_->computeAllTerms_ABA(data_, state_.q_, state_.v_, state_.tau_);
 
         if (ctrl_mode_ == 0){ //g // gravity mode
             state_.torque_.setZero();
@@ -506,7 +516,7 @@ namespace RobotController{
 
         robot_->frameVelocity(data_, robot_->model().getFrameId("panda_joint7"), v_frame);
 
-        vel = T_offset.act(v_frame);
+        vel = T_offset.act(v_frame); //if T_offset is identity, then T_offset.act(v_frame) = data.v[robot_->model().getJointId("panda_joint7")]
 
         // SE3 m_wMl_prev;
         // robot_->framePosition(data_, robot_->model().getFrameId("panda_joint7"), m_wMl_prev);
@@ -545,6 +555,7 @@ namespace RobotController{
         robot_->frameClassicAcceleration(data_, robot_->model().getFrameId("panda_joint7"), m_drift);
         
         // accel = T_offset.act(a_frame+m_drift);
+        // accel = T_offset.act(m_drift);
         accel = T_offset.act(a_frame);
     }
 
@@ -608,7 +619,8 @@ namespace RobotController{
 
     void FrankaWrapper::g_joint7(VectorXd & g_vec){
         Vector3d g_global;
-        g_global << 0.0, 0.0, -9.81;
+        // g_global << 0.0, 0.0, -9.81;
+        g_global << 0.0, 0.0, 9.81;
         
         SE3 m_wMl;        
         robot_->framePosition(data_, robot_->model().getFrameId("panda_joint7"), m_wMl);

@@ -103,7 +103,15 @@ class BasicFrankaController : public controller_interface::MultiInterfaceControl
 
       return byteswaiting > 0;
   }
-  double lowpassFilter(double sample_time, double y, double y_last, double cutoff_frequency){
+  double lowpassFilter(double sample_time, double y, double y_last, double cutoff_frequency){ //cutoff_frequency is in [Hz]
+      double gain = sample_time / (sample_time + (1.0 / (2.0 * M_PI * cutoff_frequency)));
+      return gain * y + (1 - gain) * y_last;
+  }
+  Vector7d lowpassFilter(double sample_time, const Vector7d y, const Vector7d y_last, double cutoff_frequency){ //cutoff_frequency is in [Hz]
+      double gain = sample_time / (sample_time + (1.0 / (2.0 * M_PI * cutoff_frequency)));
+      return gain * y + (1 - gain) * y_last;
+  }
+  Vector6d lowpassFilter(double sample_time, const Vector6d y, const Vector6d y_last, double cutoff_frequency){ //cutoff_frequency is in [Hz]
       double gain = sample_time / (sample_time + (1.0 / (2.0 * M_PI * cutoff_frequency)));
       return gain * y + (1 - gain) * y_last;
   }
@@ -165,10 +173,11 @@ class BasicFrankaController : public controller_interface::MultiInterfaceControl
 
     // Variables
     const double delta_tau_max_{30.0};
-    Vector7d dq_filtered_, franka_torque_, franka_q_;
+    Vector7d dq_filtered_, franka_torque_, franka_q_, franka_dq_, franka_dq_d_;
+    VectorXd franka_ddq_;
     Vector6d f_filtered_, f_;
     Eigen::VectorXd franka_qacc_, robot_nle_, robot_g_;
-    MatrixXd robot_mass_, robot_J_, robot_tau_;
+    MatrixXd robot_mass_, robot_J_, robot_tau_, robot_tau_d_;
     double time_, dt_;
     bool isgrasp_;
 
@@ -184,11 +193,15 @@ class BasicFrankaController : public controller_interface::MultiInterfaceControl
     EKF * ekf;
     Objdyn objdyn;
 
-    bool isstartestimation;
+    bool isstartestimation, tau_bias_init_flag, F_ext_bias_init_flag;
     double n_param, m_FT;
     Eigen::MatrixXd A, H, Q, R, P;
     Eigen::VectorXd h, FT_measured, param, robot_g_local_;
     pinocchio::Motion vel_param, acc_param;  
+    Vector7d torque_sensor_bias_, franka_ddq_for_param_, franka_dq_prev_;
+    Vector6d franka_v_, franka_a_, franka_a_filtered_, f_local_, f_local_filtered_, F_ext_bias_;
+    MatrixXd robot_J_local_, robot_dJ_local_;
+
     ////////////////////////////////////////////////////////
 
 };
