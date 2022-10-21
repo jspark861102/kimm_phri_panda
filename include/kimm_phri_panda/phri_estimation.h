@@ -24,6 +24,7 @@
 #include <realtime_tools/realtime_publisher.h>
 #include "mujoco_ros_msgs/JointSet.h"
 #include "visualization_msgs/Marker.h"
+#include "dynamic_reconfigure/server.h"
 
 // tf
 #include <tf/transform_broadcaster.h>
@@ -43,7 +44,11 @@
 #include <franka_msgs/SetLoad.h>
 
 // Object estimation
+#include "geometry_msgs/Wrench.h"
 #include "kimm_phri_msgs/ObjectParameter.h"
+#include <../../kimm_object_estimation/include/kimm_object_estimation/main/extendedkalman.hpp>
+#include <../../kimm_object_estimation/include/kimm_object_estimation/objdyn/object_dynamics.hpp>
+#include <kimm_phri_panda/ekf_paramConfig.h>
 
 // System
 #include <iostream>
@@ -55,12 +60,11 @@
 #include <sys/resource.h>
 typedef Eigen::Matrix<double, 7, 1> Vector7d;
 typedef Eigen::Matrix<double, 6, 1> Vector6d;
-typedef Eigen::Matrix<double, 9, 1> Vector9d;
 typedef Eigen::Matrix<double, 7, 7> Matrix7d;
 
 namespace kimm_franka_controllers {
 
-class BasicFrankaController : public controller_interface::MultiInterfaceController<
+class ObjectParameterEstimator : public controller_interface::MultiInterfaceController<
 								   franka_hw::FrankaModelInterface,
 								   hardware_interface::EffortJointInterface,
 								   franka_hw::FrankaStateInterface> {
@@ -68,7 +72,7 @@ class BasicFrankaController : public controller_interface::MultiInterfaceControl
   bool init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& node_handle) override;
   void starting(const ros::Time& time) override;
   void update(const ros::Time& time, const ros::Duration& period) override;
-  void stopping(const ros::Time& /*time*/) override;
+  void stopping(const ros::Time&) override;
 
   void ctrltypeCallback(const std_msgs::Int16ConstPtr &msg);
   void mobtypeCallback(const std_msgs::Int16ConstPtr &msg);  
@@ -76,9 +80,17 @@ class BasicFrankaController : public controller_interface::MultiInterfaceControl
   void asyncCalculationProc(); 
   void modeChangeReaderProc();
   void setFrankaCommand();
-  void getEEState();  
+  void getEEState();
 
-  void panda_load_parameter_pub();
+  //////////////////// object estimation /////////////////
+  void getObjParam_init();
+  void getObjParam();
+  void ObjectParameter_pub();
+  double saturation(double x, double limit);
+  void FT_measured_pub();
+  void vel_accel_pub();
+  void setObjParam();
+  ////////////////////////////////////////////////////////
 
   void keyboard_event();
   bool _kbhit()
@@ -141,7 +153,7 @@ class BasicFrankaController : public controller_interface::MultiInterfaceControl
 
  private: 
     ros::Publisher ee_state_pub_, torque_state_pub_, joint_state_pub_, time_pub_;
-    ros::Publisher panda_load_parameter_pub_;
+    ros::Publisher wrench_mesured_pub_, object_parameter_pub_, vel_pub_, accel_pub_;
     ros::ServiceClient setload_client;
 
     geometry_msgs::Transform ee_state_msg_;
@@ -184,13 +196,28 @@ class BasicFrankaController : public controller_interface::MultiInterfaceControl
     ros::Subscriber ctrl_type_sub_, mob_subs_;
     int mob_type_;  
 
-    //////////////////// object parameter /////////////////
+    //////////////////// object estimation /////////////////
+    // EKF ekf(0.001,A, H, Q, R, P, h);
+    EKF * ekf;
+    Objdyn objdyn;
+
+    bool isstartestimation, tau_bias_init_flag, F_ext_bias_init_flag;
+    double n_param, m_FT;
+    Eigen::MatrixXd A, H, Q, R, P;
+    Eigen::VectorXd h, FT_measured, param, robot_g_local_;
+    pinocchio::Motion vel_param, acc_param;  
+    Vector7d torque_sensor_bias_, franka_ddq_for_param_, franka_dq_prev_;
+    Vector6d franka_v_, franka_a_, franka_a_filtered_, f_local_, f_local_filtered_, F_ext_bias_;
+    MatrixXd robot_J_local_, robot_dJ_local_;
     double m_load_;
-    Vector3d F_x_Cload_;
-    Vector9d I_load_;    
-    double obj_mass_;
-    Vector3d obj_com_;
-    Vector9d obj_inertia_;
+    bool flag_;
+    ros::NodeHandle n_node_;
+    bool repeatavoiding_flag_, is_Fext_coordinate_global_;
+
+    // Dynamic reconfigure    
+    std::unique_ptr<dynamic_reconfigure::Server<kimm_phri_panda::ekf_paramConfig>> ekf_param_;
+    ros::NodeHandle ekf_param_node_;    
+    void ekfParamCallback(kimm_phri_panda::ekf_paramConfig& config, uint32_t level);
     ////////////////////////////////////////////////////////
 
 };

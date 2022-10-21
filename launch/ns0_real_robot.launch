@@ -21,6 +21,7 @@
   
   <!-- my controller spawn -->
   <rosparam command="load" file="$(find kimm_phri_panda)/config/kimm_phri_panda_controllers.yaml" />
+  <rosparam command="load" file="$(find kimm_phri_panda)/config/kimm_phri_object_parameter.yaml" />
   <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen"  args="basic_franka_controller"/>      
 
   <node name="rqt" pkg="rqt_gui" type="rqt_gui" args="--perspective-file $(find kimm_phri_panda)/rqt/kimm_phri_panda_real.perspective" output="screen"/>

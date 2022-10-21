@@ -22,12 +22,16 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 find_package(Eigen3 REQUIRED)
-find_package(Franka 0.5.0 REQUIRED)
+find_package(Franka 0.7.0 REQUIRED)
 find_package(kimm_hqp_controller REQUIRED)
 find_package(kimm_joint_planner_ros_interface REQUIRED)
 find_package(kimm_se3_planner_ros_interface REQUIRED)
 find_package(kimm_path_planner_ros_interface REQUIRED)
 find_package(kimm_object_estimation REQUIRED)
+
+generate_dynamic_reconfigure_options(
+  cfg/ekf_param.cfg  
+)
 
 catkin_package(
   LIBRARIES ${PROJECT_NAME}
@@ -71,6 +75,7 @@ include_directories(
 
 add_library(${PROJECT_NAME}
   src/phri_real.cpp
+  src/phri_estimation.cpp
 )
 
 add_dependencies(${PROJECT_NAME}
@@ -94,7 +99,8 @@ target_link_libraries(${PROJECT_NAME}_simulation
   ${LIBRARY_NAME}
   -lpthread
 )
-add_dependencies(${PROJECT_NAME}_simulation ${PROJECT_NAME}_gencpp)
+add_dependencies(${PROJECT_NAME}_simulation ${PROJECT_NAME}_gencpp ${PROJECT_NAME}_gencfg
+)
 
 
 #############

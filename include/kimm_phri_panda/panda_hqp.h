@@ -1,3 +1,5 @@
+#pragma once
+
 //Pinocchio Header
 #include <pinocchio/fwd.hpp>
 #include <pinocchio/algorithm/joint-configuration.hpp> 
@@ -27,7 +29,7 @@
 #include <kimm_hqp_controller/trajectory/trajectory_euclidian.hpp>
 #include <kimm_hqp_controller/trajectory/trajectory_se3.hpp>
 #include <kimm_hqp_controller/solver/solver_HQP_factory.hxx>
-#include <kimm_hqp_controller/solver/util.hpp>
+// #include <kimm_hqp_controller/solver/util.hpp> //multiple definition problem
 #include <kimm_hqp_controller/math/util.hpp>
 
 // service 

@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<launch>
+  <arg name="robot_ip" default="172.16.0.2" />
+  <arg name="load_gripper" default="true" />    
+
+  <param name="robot_group" type="string" value="ns0"/>  
+
+  <!-- franka_bringup -->
+  <include file="$(find franka_control)/launch/franka_control.launch" >
+    <arg name="robot_ip" value="$(arg robot_ip)" />
+    <arg name="load_gripper" value="$(arg load_gripper)" />
+  </include> 
+
+  <group ns ="ns0">
+    <!-- for pinocchio -->
+    <param name="robot_urdf_path" type="string" value="$(find franka_panda_description)"/>
+    <param name="robot_urdf" type="string" value="/franka_single/panda_arm_hand_l.urdf"/>                        
+  </group>
+
+  <!-- my controller spawn -->
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen"  args="object_parameter_estimator"/>      
+  <node name="rqt" pkg="rqt_gui" type="rqt_gui" args="--perspective-file $(find kimm_phri_panda)/rqt/kimm_phri_panda_real2.perspective" output="screen"/>
+
+  <!-- dynamic reconfigure for EKF tuning -->
+  <!-- <node name="rqt_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure" required="false" /> -->
+
+  <!-- rosparam upload -->
+  <rosparam command="load" file="$(find kimm_phri_panda)/config/kimm_phri_panda_controllers.yaml" />    
+  <rosparam command="load" file="$(find kimm_phri_panda)/config/kimm_phri_object_parameter.yaml" />
+</launch>
+

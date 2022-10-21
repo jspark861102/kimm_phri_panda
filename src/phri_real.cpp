@@ -9,7 +9,6 @@
 
 #include <franka/robot_state.h>
 
-
 namespace kimm_franka_controllers
 {
 
@@ -26,20 +25,15 @@ bool BasicFrankaController::init(hardware_interface::RobotHW* robot_hw, ros::Nod
   time_pub_ = node_handle.advertise<std_msgs::Float32>("/" + group_name_ + "/time", 1);
 
   ee_state_pub_ = node_handle.advertise<geometry_msgs::Transform>("/" + group_name_ + "/real_robot/ee_state", 5);
-  ee_state_msg_ = geometry_msgs::Transform();
+  ee_state_msg_ = geometry_msgs::Transform();  
 
-  // object estimation 
-  object_parameter_pub_ = node_handle.advertise<kimm_phri_msgs::ObjectParameter>("/" + group_name_ + "/real_robot/object_parameter", 5);
-  wrench_mesured_pub_ = node_handle.advertise<geometry_msgs::Wrench>("/" + group_name_ + "/real_robot/wrench_measured", 5);
-  vel_pub_ = node_handle.advertise<geometry_msgs::Twist>("/" + group_name_ + "/real_robot/object_velocity", 5);
-  accel_pub_ = node_handle.advertise<geometry_msgs::Twist>("/" + group_name_ + "/real_robot/object_acceleration", 5);
- 
-  isgrasp_ = false;  
+  // panda load pub
+  panda_load_parameter_pub_ = node_handle.advertise<kimm_phri_msgs::ObjectParameter>("/" + group_name_ + "/real_robot/panda_load_parameter", 5);
 
-  // ************ object estimation *************** //               
-  isstartestimation = false;
-  getObjParam_init();
-  // ********************************************** //    
+  // set load
+  setload_client = node_handle.serviceClient<franka_msgs::SetLoad>("/franka_control/set_load");  
+
+  isgrasp_ = false;    
   
   gripper_ac_.waitForServer();
   gripper_grasp_ac_.waitForServer();
@@ -99,6 +93,40 @@ bool BasicFrankaController::init(hardware_interface::RobotHW* robot_hw, ros::Nod
     }
   }  
 
+  //set external load --------------------------------------------------------------//
+  std::vector<double> obj_com, obj_inertia;
+  node_handle.getParam("/object_parameter/mass", obj_mass_);
+  node_handle.getParam("/object_parameter/center_of_mass", obj_com);
+  node_handle.getParam("/object_parameter/inertia", obj_inertia);
+  
+  obj_com_ = Eigen::Map<Vector3d>(obj_com.data());
+  obj_inertia_ = Eigen::Map<Vector9d>(obj_inertia.data());
+
+  setload_srv.request.mass = obj_mass_;
+  setload_srv.request.F_x_center_load[0] = 0.0;
+  setload_srv.request.F_x_center_load[1] = 0.0;
+  setload_srv.request.F_x_center_load[2] = 0.0;  
+  setload_srv.request.load_inertia[0] = 0.0;  
+  setload_srv.request.load_inertia[1] = 0.0;  
+  setload_srv.request.load_inertia[2] = 0.0;  
+  setload_srv.request.load_inertia[3] = 0.0;  
+  setload_srv.request.load_inertia[4] = 0.0;  
+  setload_srv.request.load_inertia[5] = 0.0;  
+  setload_srv.request.load_inertia[6] = 0.0;  
+  setload_srv.request.load_inertia[7] = 0.0;  
+  setload_srv.request.load_inertia[8] = 0.0;  
+
+  
+  // setload_client.call(setload_srv);    
+  if(setload_client.call(setload_srv))
+  {
+    ROS_INFO("set load succeed");
+  }
+  else
+  {
+    ROS_INFO("Failed to call service");
+  }
+
   //keyboard event
   mode_change_thread_ = std::thread(&BasicFrankaController::modeChangeReaderProc, this);
 
@@ -119,8 +147,23 @@ void BasicFrankaController::starting(const ros::Time& time) {
   robot_state_msg_.velocity.resize(9); // 7 (franka) + 2 (gripper)  
 
   dq_filtered_.setZero();
-  f_filtered_.setZero();    
-  f_local_filtered_.setZero();    
+  f_filtered_.setZero();     
+
+  //franka state_handle to check load parameter -------------------------------//
+  franka::RobotState robot_state = state_handle_->getRobotState(); 
+
+  double m_load(robot_state.m_load);
+  m_load_ = m_load; //external load's mass.   
+
+  Eigen::Map<Eigen::Matrix<double, 3, 1>> F_x_Cload(robot_state.F_x_Cload.data());
+  F_x_Cload_ = F_x_Cload; //external load's com   
+
+  Eigen::Map<Eigen::Matrix<double, 9, 1>> I_load(robot_state.I_load.data());
+  I_load_ = I_load; //external load's inertia
+  
+  ROS_INFO_STREAM("m_load_ :" << m_load_);
+  ROS_INFO_STREAM("F_x_Cload_ :" << "[" << F_x_Cload_[0] << "  " << F_x_Cload_[1] << "  " << F_x_Cload_[2] << "]");
+  ROS_INFO_STREAM("I_load_ :" << I_load_[0] << "  " << I_load_[1] << "  " << I_load_[2] << "  " << I_load_[3] << "  " << I_load_[4] << "  " << I_load_[5] << "  " << I_load_[6] << "  " << I_load_[7] << "  " << I_load_[8]);
 }
 
 void BasicFrankaController::update(const ros::Time& time, const ros::Duration& period) {
@@ -167,10 +210,16 @@ void BasicFrankaController::update(const ros::Time& time, const ros::Duration& p
   franka_dq_d_ = franka_dq_d; //Desired joint velocity [rad/s]  
   
   Eigen::Map<Eigen::Matrix<double, 6, 1>> force_franka(robot_state.O_F_ext_hat_K.data());
-  f_ = force_franka; //Estimated external wrench (force, torque) acting on stiffness frame, expressed relative to the base frame. 
+  f_ = force_franka; //Estimated external wrench (force, torque) acting on stiffness frame, expressed relative to the base frame.   
 
-  Eigen::Map<Eigen::Matrix<double, 6, 1>> force_franka_local(robot_state.K_F_ext_hat_K.data());
-  f_local_ = force_franka_local; //Estimated external wrench (force, torque) acting on stiffness frame, expressed relative to the stiffness frame. 
+  double m_load(robot_state.m_load);
+  m_load_ = m_load; //external load's mass.   
+
+  Eigen::Map<Eigen::Matrix<double, 3, 1>> F_x_Cload(robot_state.F_x_Cload.data());
+  F_x_Cload_ = F_x_Cload; //external load's com   
+
+  Eigen::Map<Eigen::Matrix<double, 9, 1>> I_load(robot_state.I_load.data());
+  I_load_ = I_load; //external load's inertia
 
   // can be used
   //robot_state.tau_ext_hat_filtered.data(); //External torque, filtered. [Nm]
@@ -183,8 +232,7 @@ void BasicFrankaController::update(const ros::Time& time, const ros::Duration& p
   
   //filtering ---------------------------------------------------------------------------------//  
   dq_filtered_      = lowpassFilter( dt_,  franka_dq,  dq_filtered_,       20.0); //in Hz, Vector7d
-  f_filtered_       = lowpassFilter( dt_,  f_,         f_filtered_,        20.0); //in Hz, Vector6d
-  f_local_filtered_ = lowpassFilter( dt_,  f_local_,   f_local_filtered_,  20.0); //in Hz, Vector6d  
+  f_filtered_       = lowpassFilter( dt_,  f_,         f_filtered_,        20.0); //in Hz, Vector6d  
   
   // thread for franka state update to HQP -----------------------------------------------------//
   if (calculation_mutex_.try_lock())
@@ -216,11 +264,7 @@ void BasicFrankaController::update(const ros::Time& time, const ros::Duration& p
   ctrl_->franka_output(franka_qacc_); 
 
   //for object estimation--------------------//
-  // ctrl_->ddq(franka_ddq_);               //ddq is obtained from pinocchio ABA algorithm
-  ctrl_->g_joint7(robot_g_local_);    
-  ctrl_->JLocal_offset(robot_J_local_);     //offset applied ,local joint7
-  ctrl_->dJLocal_offset(robot_dJ_local_);   //offset applied ,local joint7
-
+  // ctrl_->ddq(franka_ddq_);               //ddq is obtained from pinocchio ABA algorithm  
   // ctrl_->mass(robot_mass_);              //use franka api mass, not pinocchio mass
   robot_mass_(4, 4) *= 6.0;                 //practical term? for gain tuining?
   robot_mass_(5, 5) *= 6.0;                 //practical term? for gain tuining?
@@ -248,6 +292,10 @@ void BasicFrankaController::update(const ros::Time& time, const ros::Duration& p
       franka_torque_ += robot_J_.transpose().col(0) * f_filtered_(0);
       franka_torque_ += robot_J_.transpose().col(1) * f_filtered_(1);
       franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2);
+
+      // franka_torque_ += robot_J_.transpose().col(3) * f_filtered_(3);  //don't do this code , dangerous!
+      // franka_torque_ += robot_J_.transpose().col(4) * f_filtered_(4);  //don't do this code , dangerous!
+      // franka_torque_ += robot_J_.transpose().col(5) * f_filtered_(5);  //don't do this code , dangerous!
     }
   }
 
@@ -271,263 +319,47 @@ void BasicFrankaController::update(const ros::Time& time, const ros::Duration& p
   this->setFrankaCommand(); //just update robot_command_msg_ by franka_torque_ 
   torque_state_pub_.publish(robot_command_msg_);
 
-  //Object estimation --------------------------------------------------------------//
-  // ************ object estimation *************** //               
-  vel_accel_pub();        
-  FT_measured_pub();        
-  getObjParam();                                    // object estimation
-  ObjectParameter_pub();                            // data plot for monitoring
-  // ********************************************** //    
+  //pub panda load parameter -----------------------------------------------------//
+  this->panda_load_parameter_pub();  
 
   //Debug ------------------------------------------------------------------------//
-  // if (print_rate_trigger_())
-  // {
-  //   ROS_INFO("--------------------------------------------------");
-  //   ROS_INFO_STREAM("odom_lpf_ :" << odom_lpf_.transpose());
-  // }
+  if (print_rate_trigger_())
+  {
+    // ROS_INFO("--------------------------------------------------");
+    // ROS_INFO_STREAM("robot_mass_ :" << robot_mass_);
+    // ROS_INFO_STREAM("m_load_ :" << m_load_);
+    // ROS_INFO_STREAM("odom_lpf_ :" << odom_lpf_.transpose());
+  }
 }
 
 void BasicFrankaController::stopping(const ros::Time& time){
     ROS_INFO("Robot Controller::stopping");
 } 
 
-// ************************************************ object estimation start *************************************************** //                       
-void BasicFrankaController::vel_accel_pub(){
-    //************* obtained from pinocchio ***********// 
-    //**** velocity (data.v) is identical with franka velocity dq_filtered_, 
-    //**** but acceleration (data.a) is not reasnoble for both local and global cases.
-    // ctrl_->velocity(vel_param);                //offset is applied, LOCAL
-    // ctrl_->acceleration(acc_param);            //offset is applied, LOCAL
-    
-    // ctrl_->velocity_global(vel_param);         //offset is applied, GLOBAL
-    // ctrl_->acceleration_global(acc_param);     //offset is applied, GLOBAL        
-    
-    // ctrl_->velocity_origin(vel_param);         //offset is not applied, GLOBAL  --> if offset is zero, velocity_global = velocity_orign
-    // ctrl_->acceleration(acc_param);            //offset not is applied, GLOBAL  --> if offset is zero, acceleration_global = acceleration_orign    
-
-    //************* obtained from franka and pinocchio : LOCAL **************//            
-    if (isstartestimation) { //start only when the robot is in proper state
-
-      if(tau_bias_init_flag) {   //due to the bias of torque sensor in franka, initial bias should be corrected when estimation is started (See force_example_controller.cpp in franka_ros)
-        torque_sensor_bias_ = robot_tau_ - robot_g_;  
-        tau_bias_init_flag = false;
-      }      
-
-      //ddq from this method is not a acceleration behavior, but torque behavior (bias is presented in case of the no motion) ------------------//
-      // franka_ddq_for_param_ = robot_mass_.inverse() * (robot_tau_ - robot_g_ - torque_sensor_bias_) - robot_nle_; 
-      
-      //ddq from derivative of dq is very noisy, but for now, there is no other way to obatin ddq (0930) ---------------------------------------//
-      franka_ddq_for_param_ = (franka_dq_ - franka_dq_prev_)/dt_;
-      franka_dq_prev_ = franka_dq_;
-
-      //obtain cartesian velocity and acceleration at joint7 LOCAL frame -----------------------------------------------------------------------//
-      franka_v_.setZero();
-      franka_a_.setZero();
-      for (int i=0; i<7; i++){         
-          franka_v_ += robot_J_local_.col(i) * dq_filtered_[i];                                                     
-          franka_a_ += robot_dJ_local_.col(i) * franka_dq_[i] + robot_J_local_.col(i) * franka_ddq_for_param_[i];   
-      }              
-    }
-    else { //no estimation state
-      torque_sensor_bias_.setZero();
-      franka_ddq_for_param_.setZero();
-      franka_a_.setZero();
-
-      franka_v_.setZero();
-      for (int i=0; i<7; i++){ //dq is measured signal so, show regradless of estimation on/off
-          franka_v_ += robot_J_local_.col(i) * dq_filtered_[i];                                                     
-      }              
-    }
-
-    // Filtering
-    franka_a_filtered_ = lowpassFilter( dt_, franka_a_, franka_a_filtered_, 5.0); //in Hz, Vector6d
-
-    //convert to pinocchio::Motion -----------------------------------------------------------------------------------------------------------//
-    vel_param.linear()[0] = franka_v_(0);
-    vel_param.linear()[1] = franka_v_(1);
-    vel_param.linear()[2] = franka_v_(2);            
-    vel_param.angular()[0] = franka_v_(3);
-    vel_param.angular()[1] = franka_v_(4);
-    vel_param.angular()[2] = franka_v_(5);
-
-    acc_param.linear()[0] = franka_a_filtered_(0);
-    acc_param.linear()[1] = franka_a_filtered_(1);
-    acc_param.linear()[2] = franka_a_filtered_(2);
-    acc_param.angular()[0] = franka_a_filtered_(3);
-    acc_param.angular()[1] = franka_a_filtered_(4);
-    acc_param.angular()[2] = franka_a_filtered_(5);
-
-    //publish --------------------------------------------------------------------------------------------------------------------------------//
-    geometry_msgs::Twist vel_msg, accel_msg;   
-
-    vel_msg.linear.x = vel_param.linear()[0];
-    vel_msg.linear.y = vel_param.linear()[1];
-    vel_msg.linear.z = vel_param.linear()[2];
-    vel_msg.angular.x = vel_param.angular()[0];
-    vel_msg.angular.y = vel_param.angular()[1];
-    vel_msg.angular.z = vel_param.angular()[2];
-
-    accel_msg.linear.x = acc_param.linear()[0];
-    accel_msg.linear.y = acc_param.linear()[1];
-    accel_msg.linear.z = acc_param.linear()[2];
-    accel_msg.angular.x = acc_param.angular()[0];
-    accel_msg.angular.y = acc_param.angular()[1];
-    accel_msg.angular.z = acc_param.angular()[2];
-
-    vel_pub_.publish(vel_msg);
-    accel_pub_.publish(accel_msg);
-}
-
-void BasicFrankaController::FT_measured_pub() {    
-    for (int i=0; i<6; i++){  
-      //obtained from franka API--------------------------------//
-      // FT_measured[i] = f_filtered_(i);        //GLOBAL 
-      // FT_measured[i] = -f_local_filtered_(i); //LOCAL w.r.t. hand frame, not joint7 frame
-    }
-
-    //obtained from pinocchio for the joint7 local frame--------//
-    pinocchio::SE3 oMi;
-    pinocchio::Force f_pin_global, f_pin_local;
-    
-    if (isstartestimation) { //start only when the robot is in proper state
-      if(F_ext_bias_init_flag) {   //F_ext bias to be corrected 
-        F_ext_bias_ = f_filtered_;  
-        F_ext_bias_init_flag = false;
-      } 
-    }
-    else {
-      F_ext_bias_.setZero();
-    }     
-
-    //GLOBAL ---------------------------------------//
-    f_pin_global.linear()[0] = f_filtered_(0) - F_ext_bias_(0);
-    f_pin_global.linear()[1] = f_filtered_(1) - F_ext_bias_(1);
-    f_pin_global.linear()[2] = f_filtered_(2) - F_ext_bias_(2);
-    f_pin_global.angular()[0] = f_filtered_(3) - F_ext_bias_(3);
-    f_pin_global.angular()[1] = f_filtered_(4) - F_ext_bias_(4);
-    f_pin_global.angular()[2] = f_filtered_(5) - F_ext_bias_(5);
-
-    //LOCAL ---------------------------------------//
-    ctrl_->position(oMi);
-    oMi.translation().setZero();
-    f_pin_local = -oMi.actInv(f_pin_global); //global to local, f is external forces, so (-) is needed
-    // f_pin_local = oMi.actInv(f_pin_global); //global to local
-
-    FT_measured[0] = f_pin_local.linear()[0];
-    FT_measured[1] = f_pin_local.linear()[1];
-    FT_measured[2] = f_pin_local.linear()[2];
-    FT_measured[3] = f_pin_local.angular()[0];
-    FT_measured[4] = f_pin_local.angular()[1];
-    FT_measured[5] = f_pin_local.angular()[2];
-
-    //publish ---------------------------------------------------//
-    geometry_msgs::Wrench FT_measured_msg;  
-
-    FT_measured_msg.force.x = saturation(FT_measured[0],50);
-    FT_measured_msg.force.y = saturation(FT_measured[1],50);
-    FT_measured_msg.force.z = saturation(FT_measured[2],50);
-    FT_measured_msg.torque.x = saturation(FT_measured[3],10);
-    FT_measured_msg.torque.y = saturation(FT_measured[4],10);
-    FT_measured_msg.torque.z = saturation(FT_measured[5],10);
-
-    wrench_mesured_pub_.publish(FT_measured_msg);    
-}
-
-void BasicFrankaController::getObjParam(){
-    // *********************************************************************** //
-    // ************************** object estimation ************************** //
-    // *********************************************************************** //
-    // franka output     : robot_state        (motion) : 7 = 7(joint)               for pose & velocity, same with rviz jointstate
-    // pinocchio input   : state_.q_, v_      (motion) : 7 = 7(joint)               for q,v
-    // controller output : state_.torque_     (torque) : 7 = 7(joint)               for torque, pinocchio doesn't control gripper
-    // franka input      : setCommand         (torque) : 7 = 7(joint)               gripper is controlle by other action client
-    
-    //*--- p cross g = (py*gz-pz*gy)i + (pz*gx-px*gz)j + (px*gy-py*gx)k ---*//
-
-    //*--- FT_measured & vel_param & acc_param is joint7 LOCAL frame ---*//
-
-    if (isstartestimation) {
-
-        h = objdyn.h(param, vel_param.toVector(), acc_param.toVector(), robot_g_local_); //Vector3d(0,0,9.81)
-        H = objdyn.H(param, vel_param.toVector(), acc_param.toVector(), robot_g_local_); //Vector3d(0,0,9.81)
-
-        ekf->update(FT_measured, dt_, A, H, h);
-        param = ekf->state();   
-
-        if (fabs(fabs(robot_g_local_(0)) - 9.81) < 0.02) param[1] = 0.0; //if x axis is aligned with global gravity axis, corresponding param is not meaninful 
-        if (fabs(fabs(robot_g_local_(1)) - 9.81) < 0.02) param[2] = 0.0; //if y axis is aligned with global gravity axis, corresponding param is not meaninful 
-        if (fabs(fabs(robot_g_local_(2)) - 9.81) < 0.02) param[3] = 0.0; //if z axis is aligned with global gravity axis, corresponding param is not meaninful 
-    }
-}
-
-void BasicFrankaController::ObjectParameter_pub(){         
-    //LOCAL to GLOBAL -------------------------------------------//
-    Eigen::Vector3d com_global;
-    pinocchio::SE3 oMi;
-    ctrl_->position(oMi);
-    oMi.translation().setZero();
-    com_global = oMi.act(Vector3d(param[1], param[2], param[3])); //local to global         
-    
-    // com_global[2] += (0.1654-0.035); //from l_husky_with_panda_hand.xml, (0.1654:l_panda_rightfinger pos, 0.035: l_panda_rightfinger's cls pos)    
-
-    //publish ---------------------------------------------------//
+void BasicFrankaController::panda_load_parameter_pub(){              
     kimm_phri_msgs::ObjectParameter objparam_msg;
 
     objparam_msg.com.resize(3);
-    objparam_msg.inertia.resize(6);     
+    objparam_msg.inertia.resize(9);     
 
-    objparam_msg.mass = saturation(param[0],5.0);    
-    objparam_msg.com[0] = saturation(com_global[0],0.6); // need to check for transformation
-    objparam_msg.com[1] = saturation(com_global[1],0.6); // need to check for transformation
-    objparam_msg.com[2] = saturation(com_global[2],0.6); // need to check for transformation
+    objparam_msg.mass = m_load_;
 
-    object_parameter_pub_.publish(objparam_msg);              
+    objparam_msg.com[0] = F_x_Cload_[0];
+    objparam_msg.com[1] = F_x_Cload_[1];
+    objparam_msg.com[2] = F_x_Cload_[2];
+
+    objparam_msg.inertia[0] = I_load_[0];
+    objparam_msg.inertia[1] = I_load_[1];
+    objparam_msg.inertia[2] = I_load_[2];
+    objparam_msg.inertia[3] = I_load_[3];
+    objparam_msg.inertia[4] = I_load_[4];
+    objparam_msg.inertia[5] = I_load_[5];
+    objparam_msg.inertia[6] = I_load_[6];
+    objparam_msg.inertia[7] = I_load_[7];
+    objparam_msg.inertia[8] = I_load_[8];
+
+    panda_load_parameter_pub_.publish(objparam_msg);              
 }
-
-void BasicFrankaController::getObjParam_init(){
-    n_param = 10;
-    m_FT = 6;
-
-    A.resize(n_param, n_param); // System dynamics matrix
-    H.resize(m_FT,    n_param); // Output matrix
-    Q.resize(n_param, n_param); // Process noise covariance
-    R.resize(m_FT,    m_FT); // Measurement noise covariance
-    P.resize(n_param, n_param); // Estimate error covariance
-    h.resize(m_FT,    1); // observation      
-    param.resize(n_param);    
-    FT_measured.resize(m_FT);        
-    
-    A.setIdentity();         //knwon, identity
-    Q.setIdentity();         //design parameter
-    R.setIdentity();         //design parameter    
-    P.setIdentity();         //updated parameter
-    h.setZero();             //computed parameter
-    H.setZero();             //computed parameter    
-    param.setZero();   
-    FT_measured.setZero();
-    vel_param.setZero();
-    acc_param.setZero();    
-    franka_dq_prev_.setZero();
-
-    Q(0,0) *= 0.01;
-    Q(1,1) *= 0.0001;
-    Q(2,2) *= 0.0001;
-    Q(3,3) *= 0.0001;
-    R *= 100000;
-    
-    // Construct the filter
-    ekf = new EKF(dt_, A, H, Q, R, P, h);
-    
-    // Initialize the filter  
-    ekf->init(time_, param);
-}  
-
-double BasicFrankaController::saturation(double x, double limit) {
-    if (x > limit) return limit;
-    else if (x < -limit) return -limit;
-    else return x;
-}
-// ************************************************ object estimation end *************************************************** //                       
 
 void BasicFrankaController::ctrltypeCallback(const std_msgs::Int16ConstPtr &msg){
     // calculation_mutex_.lock();
@@ -615,7 +447,7 @@ void BasicFrankaController::modeChangeReaderProc(){
     key = tolower(key);
     calculation_mutex_.lock();
 
-    int msg = 0;
+    int msg = 0; 
     switch (key){
       case 'g': //gravity mode
           msg = 0;
@@ -668,20 +500,24 @@ void BasicFrankaController::modeChangeReaderProc(){
           cout << "f_ext test" << endl;
           cout << " " << endl;
           break;       
-      case 'o': //object estimation
-          if (isstartestimation){
-              cout << "end estimation" << endl;
-              isstartestimation = false;
-              param.setZero();
-              ekf->init(time_, param);
-          }
-          else{
-              cout << "start estimation" << endl;
-              isstartestimation = true; 
-              tau_bias_init_flag = true;
-              F_ext_bias_init_flag = true;
-          }
+      case 'y': //f_ext test
+          msg = 20;
+          ctrl_->ctrl_update(msg);
+          mob_type_ = 2;
+
+          cout << " " << endl;
+          cout << "f_ext test" << endl;
+          cout << " " << endl;
           break;       
+      case 'u': //f_ext test
+          msg = 20;
+          ctrl_->ctrl_update(msg);
+          mob_type_ = 0;
+
+          cout << " " << endl;
+          cout << "f_ext test" << endl;
+          cout << " " << endl;
+          break;             
       case 'p': //print current EE state
           msg = 99;
           ctrl_->ctrl_update(msg);
@@ -717,7 +553,7 @@ void BasicFrankaController::modeChangeReaderProc(){
         break;
       case '\r':
         break;
-      default:
+      default:       
         break;
     }
     

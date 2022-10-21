@@ -31,7 +31,7 @@ namespace RobotController{
         vector<string> package_dirs;
         package_dirs.push_back(model_path);
         string urdfFileName = package_dirs[0] + urdf_name;
-        robot_ = std::make_shared<RobotWrapper>(urdfFileName, package_dirs, false, false); //false : w/o mobile, true : w/ mobile
+        robot_ = std::make_shared<RobotWrapper>(urdfFileName, package_dirs, false, false); //first false : w/o mobile, true : w/ mobile
         model_ = robot_->model();
         
         //nq_/nv_/na_ is # of joint w.r.t pinocchio model ("panda_arm_hand_l.urdf"), so there is no gripper joints
@@ -315,9 +315,9 @@ namespace RobotController{
                 Ry.setIdentity();
                 Rz.setIdentity();
                 double angle = 15.0*M_PI/180.0;
-                // rotx(angle, Rx);
+                rotx(angle, Rx);
                 // roty(angle, Ry);
-                rotz(angle, Rz);
+                // rotz(angle, Rz);
                 H_ee_ref_.rotation() = Rz * Ry * Rx * H_ee_ref_.rotation();
                 trajEE_Cubic_->setGoalSample(H_ee_ref_);                
 

@@ -1,0 +1,4 @@
+object_parameter:
+        mass: 0.0  # [kg]
+        center_of_mass: [0.0, 0.0, 0.0]  # [m]
+        inertia: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # [kg*m^2]

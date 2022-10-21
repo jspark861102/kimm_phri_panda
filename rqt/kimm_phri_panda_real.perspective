@@ -139,7 +139,7 @@
                 },
                 "y_limits": {
                   "type": "repr",
-                  "repr": "[-50.0, 50.0]"
+                  "repr": "[-30.0, 30.0]"
                 },
                 "x_limits": {
                   "type": "repr",
@@ -186,7 +186,7 @@
                 },
                 "y_limits": {
                   "type": "repr",
-                  "repr": "[-10.0, 10.0]"
+                  "repr": "[-3.0, 3.0]"
                 },
                 "x_limits": {
                   "type": "repr",
