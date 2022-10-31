@@ -42,10 +42,12 @@ bool ObjectParameterEstimator::init(hardware_interface::RobotHW* robot_hw, ros::
 
   // ************ object estimation *************** //               
   isstartestimation = false;
-  is_Fext_coordinate_global_ = false; //true : global, false : local
+  is_Fext_coordinate_global_ = true; //true : global, false : local
   this->getObjParam_init();
 
   ROS_INFO_STREAM("force coordinate" << "  " << is_Fext_coordinate_global_);
+
+  msg_for_ext_bias_ = 0;
   // ********************************************** //    
   
   gripper_ac_.waitForServer();
@@ -106,17 +108,44 @@ bool ObjectParameterEstimator::init(hardware_interface::RobotHW* robot_hw, ros::
     }
   }  
 
+  //set external load --------------------------------------------------------------//  
+  setload_srv.request.mass = 0.0;
+  setload_srv.request.F_x_center_load[0] = 0.0;
+  setload_srv.request.F_x_center_load[1] = 0.0;
+  setload_srv.request.F_x_center_load[2] = 0.0;  
+  setload_srv.request.load_inertia[0] = 0.0;  
+  setload_srv.request.load_inertia[1] = 0.0;  
+  setload_srv.request.load_inertia[2] = 0.0;  
+  setload_srv.request.load_inertia[3] = 0.0;  
+  setload_srv.request.load_inertia[4] = 0.0;  
+  setload_srv.request.load_inertia[5] = 0.0;  
+  setload_srv.request.load_inertia[6] = 0.0;  
+  setload_srv.request.load_inertia[7] = 0.0;  
+  setload_srv.request.load_inertia[8] = 0.0;  
+
+  
+  // setload_client.call(setload_srv);    
+  if(setload_client.call(setload_srv))
+  {
+    ROS_INFO("set load succeed");
+  }
+  else
+  {
+    ROS_INFO("Failed to call service");
+  }
+
   //keyboard event
   mode_change_thread_ = std::thread(&ObjectParameterEstimator::modeChangeReaderProc, this);
 
-  ctrl_ = new RobotController::FrankaWrapper(group_name_, false, node_handle);
+  // ctrl_ = new RobotController::FrankaWrapper(group_name_, false, node_handle);
+  ctrl_ = new RobotController::FrankaWrapper(group_name_, false, node_handle, 0);
   ctrl_->initialize(); 
 
   //ros controller manager carry out starting procedure as start-stop-start sequennce, so prevent stop function
   repeatavoiding_flag_ = false;
 
   //dynamic_reconfigure    
-  ekf_param_node_ = ros::NodeHandle("efk_param_node");
+  ekf_param_node_ = ros::NodeHandle("ekf_param_node");
   ekf_param_ = std::make_unique<dynamic_reconfigure::Server<kimm_phri_panda::ekf_paramConfig>>(ekf_param_node_);
   ekf_param_->setCallback(boost::bind(&ObjectParameterEstimator::ekfParamCallback, this, _1, _2));
 
@@ -269,18 +298,17 @@ void ObjectParameterEstimator::update(const ros::Time& time, const ros::Duration
   franka_torque_ -= Kd * dq_filtered_;  
   franka_torque_ << this->saturateTorqueRate(franka_torque_, robot_tau_d_);
 
-  //for admittance control & robust control--------------------//
-  double thres = 1.0;
+  //for admittance control & robust control--------------------//  
   if (ctrl_->ctrltype() != 0){
     if (mob_type_ == 1){
-      franka_torque_ -= robot_J_.transpose().col(0) * f_filtered_(0) * thres;
-      franka_torque_ -= robot_J_.transpose().col(1) * f_filtered_(1);
-      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2);
+      franka_torque_ -= robot_J_.transpose().col(0) * f_filtered_(0); //admittance
+      franka_torque_ -= robot_J_.transpose().col(1) * f_filtered_(1); //admittance
+      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2); //robust
     }
     else if (mob_type_ == 2){
-      franka_torque_ += robot_J_.transpose().col(0) * f_filtered_(0);
-      franka_torque_ += robot_J_.transpose().col(1) * f_filtered_(1);
-      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2);
+      franka_torque_ += robot_J_.transpose().col(0) * f_filtered_(0); //robust
+      franka_torque_ += robot_J_.transpose().col(1) * f_filtered_(1); //robust
+      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2); //robust
 
       // franka_torque_ += robot_J_.transpose().col(3) * f_filtered_(3);  //don't do this code , dangerous!
       // franka_torque_ += robot_J_.transpose().col(4) * f_filtered_(4);  //don't do this code , dangerous!
@@ -376,7 +404,7 @@ void ObjectParameterEstimator::setObjParam() {
   obj_com.resize(3);
   obj_com[0] = param[1];
   obj_com[1] = param[2];
-  obj_com[2] = param[3];
+  obj_com[2] = param[3] - 0.2;
 
   obj_inertia.resize(9);
   // obj_inertia[0] = param[4];
@@ -487,12 +515,19 @@ void ObjectParameterEstimator::vel_accel_pub(){
     vel_param.angular()[1] = franka_v_(4);
     vel_param.angular()[2] = franka_v_(5);
 
-    acc_param.linear()[0] = franka_a_filtered_(0);
-    acc_param.linear()[1] = franka_a_filtered_(1);
-    acc_param.linear()[2] = franka_a_filtered_(2);
-    acc_param.angular()[0] = franka_a_filtered_(3);
-    acc_param.angular()[1] = franka_a_filtered_(4);
-    acc_param.angular()[2] = franka_a_filtered_(5);
+    // acc_param.linear()[0] = franka_a_filtered_(0);
+    // acc_param.linear()[1] = franka_a_filtered_(1);
+    // acc_param.linear()[2] = franka_a_filtered_(2);
+    // acc_param.angular()[0] = franka_a_filtered_(3);
+    // acc_param.angular()[1] = franka_a_filtered_(4);
+    // acc_param.angular()[2] = franka_a_filtered_(5);
+
+    acc_param.linear()[0] = 0.0;  //1027, acc is to nosy. So, only slow motion is sued and acc is set to zero.
+    acc_param.linear()[1] = 0.0;
+    acc_param.linear()[2] = 0.0;
+    acc_param.angular()[0] = 0.0;
+    acc_param.angular()[1] = 0.0;
+    acc_param.angular()[2] = 0.0;
 
     //publish --------------------------------------------------------------------------------------------------------------------------------//
     geometry_msgs::Twist vel_msg, accel_msg;   
@@ -525,29 +560,57 @@ void ObjectParameterEstimator::FT_measured_pub() {
     //obtained from pinocchio for the joint7 local frame--------//
     pinocchio::SE3 oMi;
     pinocchio::Force f_pin_global, f_pin_local;
-    Vector6d f_used;
 
     if (is_Fext_coordinate_global_) //global
     {
-      f_used = f_filtered_;      
+      f_used_ = f_filtered_;      
+      
+    //   if (isstartestimation) { //start only when the robot is in proper state
+    //     if(F_ext_bias_init_flag) {   //F_ext bias to be corrected 
+    //       F_ext_bias_ = f_used_;  
+    //       F_ext_bias_init_flag = false;
+    //     } 
+    //   }
+    //   else {
+    //     F_ext_bias_.setZero();
+    //   }                 
       
       if (isstartestimation) { //start only when the robot is in proper state
-        if(F_ext_bias_init_flag) {   //F_ext bias to be corrected 
-          F_ext_bias_ = f_used;  
-          F_ext_bias_init_flag = false;
-        } 
+        // if msg changed, F_ext_bias_ is chagned after 2 second (wait for move completed), and below <if/else if> is not used until msg changed again.
+        if (msg_for_ext_bias_ == 1) //key : h
+        {
+          ext_count_ = ext_count_ + 1;          
+          if(ext_count_ > 2500) //2.5 second
+          {
+            F_ext_bias_ = F_ext_bias1_;
+            
+            msg_for_ext_bias_ = 0;
+            ext_count_ = 0;
+          }
+        }
+        else if (msg_for_ext_bias_ == 4) //key : d
+        {
+          ext_count_ = ext_count_ + 1;
+          if(ext_count_ > 2500) //2.5 second
+          {
+            F_ext_bias_ = F_ext_bias2_;
+
+            msg_for_ext_bias_ = 0;
+            ext_count_ = 0;
+          }
+        }
       }
       else {
         F_ext_bias_.setZero();
-      }     
-
+      }                 
+      
       //GLOBAL ---------------------------------------//
-      f_pin_global.linear()[0] = f_used(0) - F_ext_bias_(0);
-      f_pin_global.linear()[1] = f_used(1) - F_ext_bias_(1);
-      f_pin_global.linear()[2] = f_used(2) - F_ext_bias_(2);
-      f_pin_global.angular()[0] = f_used(3) - F_ext_bias_(3);
-      f_pin_global.angular()[1] = f_used(4) - F_ext_bias_(4);
-      f_pin_global.angular()[2] = f_used(5) - F_ext_bias_(5);
+      f_pin_global.linear()[0] = f_used_(0) - F_ext_bias_(0);
+      f_pin_global.linear()[1] = f_used_(1) - F_ext_bias_(1);
+      f_pin_global.linear()[2] = f_used_(2) - F_ext_bias_(2);
+      f_pin_global.angular()[0] = f_used_(3) - F_ext_bias_(3);
+      f_pin_global.angular()[1] = f_used_(4) - F_ext_bias_(4);
+      f_pin_global.angular()[2] = f_used_(5) - F_ext_bias_(5);
 
       //LOCAL ---------------------------------------//
       ctrl_->position(oMi);
@@ -556,41 +619,42 @@ void ObjectParameterEstimator::FT_measured_pub() {
       f_pin_local = -oMi.actInv(f_pin_global); //global to local, f is external forces, so (-) is needed
       // f_pin_local = oMi.actInv(f_pin_global); //global to local      
     }
-    else //local
-    {      
-      f_used = f_local_filtered_;
 
-      if (isstartestimation) { //start only when the robot is in proper state
-        if(F_ext_bias_init_flag) {   //F_ext bias to be corrected 
-          F_ext_bias_ = f_used;  
-          F_ext_bias_init_flag = false;
-        } 
-      }
-      else {
-        F_ext_bias_.setZero();
-      }     
+    // else //local
+    // {      
+    //   f_used_ = f_local_filtered_;
 
-      //LOCAL stiffness frame ------------------------//
-      f_pin_global.linear()[0] = f_used(0) - F_ext_bias_(0);
-      f_pin_global.linear()[1] = f_used(1) - F_ext_bias_(1);
-      f_pin_global.linear()[2] = f_used(2) - F_ext_bias_(2);
-      f_pin_global.angular()[0] = f_used(3) - F_ext_bias_(3);
-      f_pin_global.angular()[1] = f_used(4) - F_ext_bias_(4);
-      f_pin_global.angular()[2] = f_used(5) - F_ext_bias_(5);
+    //   if (isstartestimation) { //start only when the robot is in proper state
+    //     if(F_ext_bias_init_flag) {   //F_ext bias to be corrected 
+    //       F_ext_bias_ = f_used_;  
+    //       F_ext_bias_init_flag = false;
+    //     } 
+    //   }
+    //   else {
+    //     F_ext_bias_.setZero();
+    //   }     
 
-      //stiffness frame to joint7  ------------------//      
-      // transfrom SE to joint7 with only rotation, not translation
-      oMi.translation().setZero();    
-      oMi.rotation().setIdentity();
+    //   //LOCAL stiffness frame ------------------------//
+    //   f_pin_global.linear()[0] = f_used_(0) - F_ext_bias_(0);
+    //   f_pin_global.linear()[1] = f_used_(1) - F_ext_bias_(1);
+    //   f_pin_global.linear()[2] = f_used_(2) - F_ext_bias_(2);
+    //   f_pin_global.angular()[0] = f_used_(3) - F_ext_bias_(3);
+    //   f_pin_global.angular()[1] = f_used_(4) - F_ext_bias_(4);
+    //   f_pin_global.angular()[2] = f_used_(5) - F_ext_bias_(5);
+
+    //   //stiffness frame to joint7  ------------------//      
+    //   // transfrom SE to joint7 with only rotation, not translation
+    //   oMi.translation().setZero();    
+    //   oMi.rotation().setIdentity();
       
-      // rotation from joint 7 to SE
-      oMi.rotation()(0,0) =  0.707;
-      oMi.rotation()(0,1) =  0.707;
-      oMi.rotation()(1,0) = -0.707;
-      oMi.rotation()(1,1) =  0.707;
+    //   // rotation from joint 7 to SE
+    //   oMi.rotation()(0,0) =  0.707;
+    //   oMi.rotation()(0,1) =  0.707;
+    //   oMi.rotation()(1,0) = -0.707;
+    //   oMi.rotation()(1,1) =  0.707;
 
-      f_pin_local = -oMi.act(f_pin_global); //global to local, f is external forces, so (-) is needed      
-    }
+    //   f_pin_local = -oMi.act(f_pin_global); //global to local, f is external forces, so (-) is needed      
+    // }
 
     FT_measured[0] = f_pin_local.linear()[0];
     FT_measured[1] = f_pin_local.linear()[1];
@@ -627,6 +691,9 @@ void ObjectParameterEstimator::getObjParam(){
 
     if (isstartestimation) {
 
+      if(ext_count_ ==0)
+      {
+
         h = objdyn.h(param, vel_param.toVector(), acc_param.toVector(), robot_g_local_); //Vector3d(0,0,9.81)
         H = objdyn.H(param, vel_param.toVector(), acc_param.toVector(), robot_g_local_); //Vector3d(0,0,9.81)
 
@@ -634,9 +701,13 @@ void ObjectParameterEstimator::getObjParam(){
         ekf->update(FT_measured, dt_, A, H, h, Q, R); //Q & R update from dynamic reconfigure
         param = ekf->state();   
 
-        if (fabs(fabs(robot_g_local_(0)) - 9.81) < 0.02) param[1] = 0.0; //if x axis is aligned with global gravity axis, corresponding param is not meaninful 
-        if (fabs(fabs(robot_g_local_(1)) - 9.81) < 0.02) param[2] = 0.0; //if y axis is aligned with global gravity axis, corresponding param is not meaninful 
-        if (fabs(fabs(robot_g_local_(2)) - 9.81) < 0.02) param[3] = 0.0; //if z axis is aligned with global gravity axis, corresponding param is not meaninful 
+        if (fabs(fabs(robot_g_local_(0)) - 9.81) < 0.05) param[1] = param_comX_prev_; //if x axis is aligned with global gravity axis, corresponding param is not meaninful 
+        if (fabs(fabs(robot_g_local_(1)) - 9.81) < 0.05) param[2] = param_comY_prev_; //if y axis is aligned with global gravity axis, corresponding param is not meaninful 
+        if (fabs(fabs(robot_g_local_(2)) - 9.81) < 0.05) param[3] = param_comZ_prev_; //if z axis is aligned with global gravity axis, corresponding param is not meaninful 
+        param_comX_prev_ = param[1];
+        param_comY_prev_ = param[2];
+        param_comZ_prev_ = param[3];
+      }
     }
 }
 
@@ -659,13 +730,13 @@ void ObjectParameterEstimator::ObjectParameter_pub(){
 
     objparam_msg.mass = saturation(param[0],5.0);        
     
-    objparam_msg.com[0] = saturation(com_global[0],0.8); // need to check for transformation
-    objparam_msg.com[1] = saturation(com_global[1],0.8); // need to check for transformation
-    objparam_msg.com[2] = saturation(com_global[2],0.8); // need to check for transformation
+    // objparam_msg.com[0] = saturation(com_global[0],30.0); // need to check for transformation
+    // objparam_msg.com[1] = saturation(com_global[1],30.0); // need to check for transformation
+    // objparam_msg.com[2] = saturation(com_global[2],30.0) - 0.20; // need to check for transformation
     
-    // objparam_msg.com[0] = saturation(param[1],1.6); // need to check for transformation
-    // objparam_msg.com[1] = saturation(param[2],0.6); // need to check for transformation
-    // objparam_msg.com[2] = saturation(param[3],0.6); // need to check for transformation
+    objparam_msg.com[0] = saturation(param[1],30.0); // need to check for transformation
+    objparam_msg.com[1] = saturation(param[2],30.0); // need to check for transformation
+    objparam_msg.com[2] = saturation(param[3],30.0) - 0.2; // need to check for transformation
 
     object_parameter_pub_.publish(objparam_msg);              
 }
@@ -694,6 +765,8 @@ void ObjectParameterEstimator::getObjParam_init(){
     vel_param.setZero();
     acc_param.setZero();    
     franka_dq_prev_.setZero();
+    f_used_.setZero();
+    ext_count_ = 0;
 
     // Q(0,0) *= 0.01;
     // Q(1,1) *= 0.0001;
@@ -707,10 +780,28 @@ void ObjectParameterEstimator::getObjParam_init(){
     // Q(3,3) *= 0.0001;
     // R *= 1000;
 
-    Q(0,0) = 0.01; // 10/21 
-    Q(1,1) = 0.01;  
-    Q(2,2) = 0.01;  
-    Q(3,3) = 0.01;  
+    // Q(0,0) = 0.01; // 10/21 
+    // Q(1,1) = 0.01;  
+    // Q(2,2) = 0.01;  
+    // Q(3,3) = 0.01;  
+    // Q(4,4) = 0.0;  
+    // Q(5,5) = 0.0;  
+    // Q(6,6) = 0.0;  
+    // Q(7,7) = 0.0;  
+    // Q(8,8) = 0.0;  
+    // Q(9,9) = 0.0;  
+
+    // R(0,0) = 0.5;  
+    // R(1,1) = 0.2;  
+    // R(2,2) = 10.0;  
+    // R(3,3) = 10.0;  
+    // R(4,4) = 10.0;  
+    // R(5,5) = 10.0;  
+
+    Q(0,0) = 0.001; // 10/28 //(10/21) gain is too sensitive to R w.r.t com parameter
+    Q(1,1) = 0.001;  
+    Q(2,2) = 0.001;  
+    Q(3,3) = 0.001;  
     Q(4,4) = 0.0;  
     Q(5,5) = 0.0;  
     Q(6,6) = 0.0;  
@@ -718,12 +809,12 @@ void ObjectParameterEstimator::getObjParam_init(){
     Q(8,8) = 0.0;  
     Q(9,9) = 0.0;  
 
-    R(0,0) = 0.5;  
-    R(1,1) = 0.2;  
-    R(2,2) = 10.0;  
-    R(3,3) = 10.0;  
-    R(4,4) = 10.0;  
-    R(5,5) = 10.0;  
+    R(0,0) = 1000.0;  
+    R(1,1) = 1000.0;  
+    R(2,2) = 1000.0;  
+    R(3,3) = 1000.0;  
+    R(4,4) = 1000.0;  
+    R(5,5) = 1000.0;  
   
     ROS_INFO("------------------------------ initial ekf parameter ------------------------------");
     ROS_INFO_STREAM("Q" << "  " << Q(0,0) << "  " << Q(1,1) << "  " << Q(2,2) << "  " << Q(3,3) );
@@ -835,74 +926,47 @@ void ObjectParameterEstimator::modeChangeReaderProc(){
     int msg = 0;
     switch (key){
       case 'g': //gravity mode
-          msg = 0;
-          ctrl_->ctrl_update(msg);
+          msg = 0;          
+          ctrl_->ctrl_update(msg);          
+
           cout << " " << endl;
           cout << "Gravity mode" << endl;
           cout << " " << endl;
           break;
       case 'h': //home
           msg = 1;
-          ctrl_->ctrl_update(msg);
+          msg_for_ext_bias_ = msg;
+          ctrl_->ctrl_update(msg);          
+
           cout << " " << endl;
           cout << "home position" << endl;
           cout << " " << endl;
-          break;
-      case 'a': //move ee +0.1x
-          msg = 2;
-          ctrl_->ctrl_update(msg);
-          cout << " " << endl;
-          cout << "move ee +0.1 x" << endl;
-          cout << " " << endl;
-          break;    
+          break;      
       case 's': //home and axis align btw base and joint 7
           msg = 3;
-          ctrl_->ctrl_update(msg);
+          ctrl_->ctrl_update(msg);          
+
           cout << " " << endl;
           cout << "home and axis align btw base and joint 7" << endl;
           cout << " " << endl;
           break;    
       case 'd': //rotate ee
           msg = 4;
-          ctrl_->ctrl_update(msg);
+          msg_for_ext_bias_ = msg;
+          ctrl_->ctrl_update(msg);          
+
           cout << " " << endl;
           cout << "rotate ee" << endl;
           cout << " " << endl;
           break;  
       case 'f': //sine motion ee
           msg = 5;
-          ctrl_->ctrl_update(msg);
+          ctrl_->ctrl_update(msg);          
+
           cout << " " << endl;
           cout << "sine motion ee" << endl;
           cout << " " << endl;
-          break;               
-      case 't': //f_ext test
-          msg = 20;
-          ctrl_->ctrl_update(msg);
-          mob_type_ = 1;
-
-          cout << " " << endl;
-          cout << "f_ext test" << endl;
-          cout << " " << endl;
-          break;       
-      case 'y': //f_ext test
-          msg = 20;
-          ctrl_->ctrl_update(msg);
-          mob_type_ = 2;
-
-          cout << " " << endl;
-          cout << "f_ext test" << endl;
-          cout << " " << endl;
-          break;       
-      case 'u': //f_ext test
-          msg = 20;
-          ctrl_->ctrl_update(msg);
-          mob_type_ = 0;
-
-          cout << " " << endl;
-          cout << "f_ext test" << endl;
-          cout << " " << endl;
-          break;       
+          break;          
       case 'o': //object estimation
           if (isstartestimation){
               cout << "end estimation" << endl;
@@ -924,13 +988,31 @@ void ObjectParameterEstimator::modeChangeReaderProc(){
           cout << "set object parameter" << endl;
           cout << " " << endl;
           
-          break;       
+          break;      
+      case 'n': //set F_ext_bias1_
+          F_ext_bias1_  = f_used_;
+          
+          cout << " " << endl;
+          cout << "set F_ext_bias1_" << endl;
+          cout << " " << endl;
+          
+          break;      
+      case 'c': //set F_ext_bias2_
+          F_ext_bias2_  = f_used_;
+          
+          cout << " " << endl;
+          cout << "set F_ext_bias2_" << endl;
+          cout << " " << endl;
+          
+          break;                 
       case 'p': //print current EE state
-          msg = 99;
-          ctrl_->ctrl_update(msg);
-          cout << " " << endl;
-          cout << "print current EE state" << endl;
-          cout << " " << endl;
+          // msg = 99;
+          // ctrl_->ctrl_update(msg);
+          // cout << " " << endl;
+          // cout << "print current EE state" << endl;
+          // cout << " " << endl;
+
+          ROS_INFO_STREAM("robot_g_local" << robot_g_local_(0) << "   " << robot_g_local_(1) << "   "  << robot_g_local_(2));  
           break;      
       case 'z': //grasp
           msg = 899;

@@ -1,6 +1,8 @@
 <?xml version="1.0" ?>
 <launch>
-  <arg name="robot_ip" default="172.16.0.2" />
+  <!-- <arg name="robot_ip" default="172.16.0.2" /> -->
+  <arg name="robot_ip" default="192.168.10.52" />
+
   <arg name="load_gripper" default="true" />    
 
   <param name="robot_group" type="string" value="ns0"/>  
@@ -18,8 +20,7 @@
   </group>
 
   <!-- my controller spawn -->
-  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen"  args="basic_franka_controller"/>        
-  <node name="rqt" pkg="rqt_gui" type="rqt_gui" args="--perspective-file $(find kimm_phri_panda)/rqt/kimm_phri_panda_real.perspective" output="screen"/>  
+  <node name="controller_spawner" pkg="controller_manager" type="spawner" respawn="false" output="screen"  args="basic_franka_controller"/>          
 
   <!-- rosparam upload -->
   <rosparam command="load" file="$(find kimm_phri_panda)/config/kimm_phri_panda_controllers.yaml" />    

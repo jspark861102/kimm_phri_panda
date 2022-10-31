@@ -33,7 +33,7 @@ bool BasicFrankaController::init(hardware_interface::RobotHW* robot_hw, ros::Nod
   // set load
   setload_client = node_handle.serviceClient<franka_msgs::SetLoad>("/franka_control/set_load");  
 
-  isgrasp_ = false;    
+  isgrasp_ = true;    // gripper is initially closed during object parameter estimation procedure
   
   gripper_ac_.waitForServer();
   gripper_grasp_ac_.waitForServer();
@@ -95,43 +95,55 @@ bool BasicFrankaController::init(hardware_interface::RobotHW* robot_hw, ros::Nod
 
   //set external load --------------------------------------------------------------//
   std::vector<double> obj_com, obj_inertia;
-  node_handle.getParam("/object_parameter/mass", obj_mass_);
-  node_handle.getParam("/object_parameter/center_of_mass", obj_com);
-  node_handle.getParam("/object_parameter/inertia", obj_inertia);
-  
-  obj_com_ = Eigen::Map<Vector3d>(obj_com.data());
-  obj_inertia_ = Eigen::Map<Vector9d>(obj_inertia.data());
-
-  setload_srv.request.mass = obj_mass_;
-  setload_srv.request.F_x_center_load[0] = 0.0;
-  setload_srv.request.F_x_center_load[1] = 0.0;
-  setload_srv.request.F_x_center_load[2] = 0.0;  
-  setload_srv.request.load_inertia[0] = 0.0;  
-  setload_srv.request.load_inertia[1] = 0.0;  
-  setload_srv.request.load_inertia[2] = 0.0;  
-  setload_srv.request.load_inertia[3] = 0.0;  
-  setload_srv.request.load_inertia[4] = 0.0;  
-  setload_srv.request.load_inertia[5] = 0.0;  
-  setload_srv.request.load_inertia[6] = 0.0;  
-  setload_srv.request.load_inertia[7] = 0.0;  
-  setload_srv.request.load_inertia[8] = 0.0;  
-
-  
-  // setload_client.call(setload_srv);    
-  if(setload_client.call(setload_srv))
+  if (node_handle.getParam("/object_parameter/mass", obj_mass_)) 
   {
-    ROS_INFO("set load succeed");
+    node_handle.getParam("/object_parameter/center_of_mass", obj_com);
+    node_handle.getParam("/object_parameter/inertia", obj_inertia);
+    
+    obj_com_ = Eigen::Map<Vector3d>(obj_com.data());
+    obj_inertia_ = Eigen::Map<Vector9d>(obj_inertia.data());
+
+    setload_srv.request.mass = obj_mass_;
+    setload_srv.request.F_x_center_load[0] = obj_com_[0];
+    setload_srv.request.F_x_center_load[1] = obj_com_[1];
+    setload_srv.request.F_x_center_load[2] = obj_com_[2];  
+    setload_srv.request.load_inertia[0] = 0.0;  
+    setload_srv.request.load_inertia[1] = 0.0;  
+    setload_srv.request.load_inertia[2] = 0.0;  
+    setload_srv.request.load_inertia[3] = 0.0;  
+    setload_srv.request.load_inertia[4] = 0.0;  
+    setload_srv.request.load_inertia[5] = 0.0;  
+    setload_srv.request.load_inertia[6] = 0.0;  
+    setload_srv.request.load_inertia[7] = 0.0;  
+    setload_srv.request.load_inertia[8] = 0.0;  
+
+    
+    // setload_client.call(setload_srv);    
+    if(setload_client.call(setload_srv))
+    {
+      ROS_INFO("set load succeed");
+    }
+    else
+    {
+      ROS_INFO("Failed to call service");
+    }
   }
-  else
+  else 
   {
-    ROS_INFO("Failed to call service");
+    ROS_INFO("object parameter is not loaded.");
+
   }
 
   //keyboard event
   mode_change_thread_ = std::thread(&BasicFrankaController::modeChangeReaderProc, this);
 
-  ctrl_ = new RobotController::FrankaWrapper(group_name_, false, node_handle);
+  // ctrl_ = new RobotController::FrankaWrapper(group_name_, false, node_handle);
+  ctrl_ = new RobotController::FrankaWrapper(group_name_, false, node_handle, 1);
   ctrl_->initialize();  
+
+  cout << " " << endl;
+  cout << "home position" << endl;
+  cout << " " << endl;
   
   return true;
 }
@@ -281,17 +293,16 @@ void BasicFrankaController::update(const ros::Time& time, const ros::Duration& p
   franka_torque_ << this->saturateTorqueRate(franka_torque_, robot_tau_d_);
 
   //for admittance control & robust control--------------------//
-  double thres = 1.0;
   if (ctrl_->ctrltype() != 0){
     if (mob_type_ == 1){
-      franka_torque_ -= robot_J_.transpose().col(0) * f_filtered_(0) * thres;
-      franka_torque_ -= robot_J_.transpose().col(1) * f_filtered_(1);
-      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2);
+      franka_torque_ -= robot_J_.transpose().col(0) * f_filtered_(0); //admittance
+      franka_torque_ -= robot_J_.transpose().col(1) * f_filtered_(1); //admittance
+      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2); //robust
     }
     else if (mob_type_ == 2){
-      franka_torque_ += robot_J_.transpose().col(0) * f_filtered_(0);
-      franka_torque_ += robot_J_.transpose().col(1) * f_filtered_(1);
-      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2);
+      franka_torque_ += robot_J_.transpose().col(0) * f_filtered_(0); //robust
+      franka_torque_ += robot_J_.transpose().col(1) * f_filtered_(1); //robust
+      franka_torque_ += robot_J_.transpose().col(2) * f_filtered_(2); //robust
 
       // franka_torque_ += robot_J_.transpose().col(3) * f_filtered_(3);  //don't do this code , dangerous!
       // franka_torque_ += robot_J_.transpose().col(4) * f_filtered_(4);  //don't do this code , dangerous!
@@ -470,27 +481,14 @@ void BasicFrankaController::modeChangeReaderProc(){
           cout << "move ee +0.1 x" << endl;
           cout << " " << endl;
           break;    
-      case 's': //home and axis align btw base and joint 7
-          msg = 3;
-          ctrl_->ctrl_update(msg);
+        case 'q': //move ee -0.1x
+          msg = 30;
+          ctrl_->ctrl_update(msg);          
+
           cout << " " << endl;
-          cout << "home and axis align btw base and joint 7" << endl;
+          cout << "move ee -0.3 x" << endl;
           cout << " " << endl;
-          break;    
-      case 'd': //rotate ee
-          msg = 4;
-          ctrl_->ctrl_update(msg);
-          cout << " " << endl;
-          cout << "rotate ee" << endl;
-          cout << " " << endl;
-          break;  
-      case 'f': //sine motion ee
-          msg = 5;
-          ctrl_->ctrl_update(msg);
-          cout << " " << endl;
-          cout << "sine motion ee" << endl;
-          cout << " " << endl;
-          break;               
+          break;       
       case 't': //f_ext test
           msg = 20;
           ctrl_->ctrl_update(msg);
@@ -526,28 +524,30 @@ void BasicFrankaController::modeChangeReaderProc(){
           cout << " " << endl;
           break;      
       case 'z': //grasp
-          msg = 899;
-          if (isgrasp_){
-              cout << "Release hand" << endl;
-              isgrasp_ = false;
-              franka_gripper::MoveGoal goal;
-              goal.speed = 0.1;
-              goal.width = 0.08;
-              gripper_ac_.sendGoal(goal);
-          }
-          else{
-              cout << "Grasp object" << endl;
-              isgrasp_ = true; 
-              franka_gripper::GraspGoal goal;
-              franka_gripper::GraspEpsilon epsilon;
-              epsilon.inner = 0.02;
-              epsilon.outer = 0.05;
-              goal.speed = 0.1;
-              goal.width = 0.02;
-              goal.force = 80.0;
-              goal.epsilon = epsilon;
-              gripper_grasp_ac_.sendGoal(goal);
-          }
+          ROS_INFO_STREAM("Gripper control is locked during object estimation procedure");
+
+          // msg = 899;
+          // if (isgrasp_){           
+          //     cout << "Release hand" << endl;
+          //     isgrasp_ = false;
+          //     franka_gripper::MoveGoal goal;
+          //     goal.speed = 0.1;
+          //     goal.width = 0.08;
+          //     gripper_ac_.sendGoal(goal);
+          // }
+          // else{
+          //     cout << "Grasp object" << endl;
+          //     isgrasp_ = true; 
+          //     franka_gripper::GraspGoal goal;
+          //     franka_gripper::GraspEpsilon epsilon;
+          //     epsilon.inner = 0.02;
+          //     epsilon.outer = 0.05;
+          //     goal.speed = 0.1;
+          //     goal.width = 0.02;
+          //     goal.force = 80.0;
+          //     goal.epsilon = epsilon;
+          //     gripper_grasp_ac_.sendGoal(goal);
+          // }
           break;
       case '\n':
         break;

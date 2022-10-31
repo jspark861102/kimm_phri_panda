@@ -29,6 +29,6 @@
             <remap from="joint_states"     to="joint_states" />
     </node>
 
-    <node name="rqt" pkg="rqt_gui" type="rqt_gui" args="--perspective-file $(find kimm_phri_panda)/rqt/kimm_phri_panda.perspective" output="screen"/>    
+    <node name="rqt" pkg="rqt_gui" type="rqt_gui" args="--perspective-file $(find kimm_phri_panda)/rqt/kimm_phri_panda_notebook.perspective" output="screen"/>    
   </group>
 </launch>

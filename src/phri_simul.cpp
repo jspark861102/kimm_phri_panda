@@ -17,7 +17,8 @@ int main(int argc, char **argv)
 
     /////////////// Robot Wrapper ///////////////
     n_node.getParam("/robot_group", group_name);    
-    ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node);
+    // ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node);
+    ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node, 0);
     ctrl_->initialize();
     
     /////////////// mujoco sub : from mujoco to here ///////////////    

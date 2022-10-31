@@ -83,7 +83,8 @@ typedef struct SE3_Action{
 namespace RobotController{
     class FrankaWrapper{
         public: 
-            FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node);
+            // FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node);
+            FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node, const int & ctrl_mode);
             ~FrankaWrapper(){};
 
             void initialize();

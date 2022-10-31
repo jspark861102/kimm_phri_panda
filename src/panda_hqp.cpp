@@ -12,14 +12,26 @@ using namespace kimmhqp::robot;
 using namespace kimmhqp::contacts;
 
 namespace RobotController{
-    FrankaWrapper::FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node)
+    // FrankaWrapper::FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node)
+    FrankaWrapper::FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node, const int & ctrl_mode)
     : robot_node_(robot_node), issimulation_(issimulation), n_node_(node)
     {
-        time_ = 0.;
-        mode_change_ = false;
-        ctrl_mode_ = 0;
+        time_ = 0.;        
         node_index_ = 0;
         cnt_ = 0;
+
+        // mode_change_ = false;
+        // ctrl_mode_ = 0;
+
+        ctrl_mode_ = ctrl_mode;
+        if (ctrl_mode_ == 1)
+        {
+            mode_change_ = true;
+        }
+        else //ctrl_mode = 0
+        {
+            mode_change_ = false;
+        }                
     }
 
     void FrankaWrapper::initialize(){
@@ -57,7 +69,8 @@ namespace RobotController{
         if (!issimulation_) //for real
         	// posture_gain << 200., 200., 200., 200., 200., 200., 200.;
             // posture_gain << 250., 150., 250., 100., 100., 100., 100.;
-            posture_gain << 100., 100., 100., 100., 100., 100., 100.;            
+            // posture_gain << 100., 100., 100., 100., 100., 100., 100.;            
+            posture_gain << 100., 100., 100., 200., 200., 200., 200.;
         else // for simulation
         	// posture_gain << 4000., 4000., 4000., 4000., 4000., 4000., 4000.;
             posture_gain << 40000., 40000., 40000., 40000., 40000., 40000., 40000.;
@@ -78,7 +91,7 @@ namespace RobotController{
         Adj_mat(2, 4) = ee_offset_(0);
 
         VectorXd ee_gain(6);
-        ee_gain << 100., 100., 100., 400., 400., 400.;
+        ee_gain << 100., 100., 100., 400., 400., 600.;
         // ee_gain << 100., 100., 100., 200., 200., 200.;
 
         eeTask_ = std::make_shared<TaskSE3Equality>("task-se3", *robot_, "panda_joint7", ee_offset);
@@ -170,10 +183,10 @@ namespace RobotController{
                 q_ref_(1) = 0.0 * M_PI / 180.0;
                 q_ref_(3) = -M_PI / 2.0;
                 q_ref_(5) = M_PI/ 2.0;
-                q_ref_(6) = M_PI/ 4.0;
+                q_ref_(6) = -M_PI/ 4.0;
 
                 trajPosture_Cubic_->setInitSample(state_.q_.tail(na_));
-                trajPosture_Cubic_->setDuration(3.0);
+                trajPosture_Cubic_->setDuration(2.0);
                 trajPosture_Cubic_->setStartTime(time_);
                 trajPosture_Cubic_->setGoalSample(q_ref_);
 
@@ -302,11 +315,14 @@ namespace RobotController{
                 trajEE_Cubic_->setStartTime(time_);
                 trajEE_Cubic_->setDuration(2.0);
                 H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7"));
+              
+                Vector3d ee_offset;
+                ee_offset << 0.0, 0.0, 0.2; //joint7 to ee
 
                 SE3 T_offset;
                 T_offset.setIdentity();
-                T_offset.translation(ee_offset_);
-                H_ee_ref_ = H_ee_ref_ * T_offset;
+                T_offset.translation(ee_offset);
+                // H_ee_ref_ = H_ee_ref_ * T_offset;
 
                 trajEE_Cubic_->setInitSample(H_ee_ref_);
 
@@ -315,10 +331,22 @@ namespace RobotController{
                 Ry.setIdentity();
                 Rz.setIdentity();
                 double angle = 15.0*M_PI/180.0;
-                rotx(angle, Rx);
-                // roty(angle, Ry);
+                double anglex = -angle;
+                double angley = angle;
+                rotx(anglex, Rx);
+                roty(angley, Ry);
                 // rotz(angle, Rz);
-                H_ee_ref_.rotation() = Rz * Ry * Rx * H_ee_ref_.rotation();
+                // H_ee_ref_.rotation() = H_ee_ref_.rotation()*Rx;
+                // H_ee_ref_.rotation() = Rz * Ry * Rx * H_ee_ref_.rotation();
+
+                Vector3d trans_offset;
+                trans_offset << -ee_offset(2)*sin(angle), -ee_offset(2)*sin(angle), ee_offset(2)*(1.0-cos(angle));
+                // H_ee_ref_.translation() = H_ee_ref_.translation() + H_ee_ref_.rotation()  * ee_offset;
+                H_ee_ref_.translation() = H_ee_ref_.translation() + H_ee_ref_.rotation() * trans_offset;
+
+                H_ee_ref_.rotation() = H_ee_ref_.rotation()*Rx*Ry;
+                
+                
                 trajEE_Cubic_->setGoalSample(H_ee_ref_);                
 
                 reset_control_ = false;
@@ -431,7 +459,7 @@ namespace RobotController{
                 H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7"));     
                 trajEE_Cubic_->setInitSample(H_ee_ref_);
                 trajEE_Cubic_->setDuration(3.0);
-                trajEE_Cubic_->setStartTime(time_);                
+                trajEE_Cubic_->setStartTime(time_);                                
                 trajEE_Cubic_->setGoalSample(H_ee_ref_);
                
                 // q_ref_ = state_.q_;       
@@ -448,6 +476,54 @@ namespace RobotController{
 
             const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);       
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
+        }
+
+        if (ctrl_mode_ == 30){ //q //collaboration work with robot arm
+            if (mode_change_){
+            //remove                
+            tsid_->removeTask("task-se3");
+            tsid_->removeTask("task-posture");
+            tsid_->removeTask("task-torque-bounds");
+
+            //add
+            tsid_->addMotionTask(*postureTask_, 1e-16, 1);
+            tsid_->addMotionTask(*torqueBoundsTask_, 1.0, 0);
+            tsid_->addMotionTask(*eeTask_, 1.0, 0);
+
+            //posture (try to maintain current joint configuration)
+            trajPosture_Cubic_->setInitSample(state_.q_.tail(na_));
+            trajPosture_Cubic_->setDuration(2.0);
+            trajPosture_Cubic_->setStartTime(time_);
+            trajPosture_Cubic_->setGoalSample(state_.q_.tail(na_));
+
+            //ee
+            trajEE_Cubic_->setStartTime(time_);
+            trajEE_Cubic_->setDuration(2.0);
+            H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7"));
+
+            SE3 T_offset;
+            T_offset.setIdentity();
+            T_offset.translation(ee_offset_);
+            H_ee_ref_ = H_ee_ref_ * T_offset;
+
+            trajEE_Cubic_->setInitSample(H_ee_ref_);
+            H_ee_ref_.translation()(0) -= 0.3;                
+            trajEE_Cubic_->setGoalSample(H_ee_ref_);
+
+            reset_control_ = false;
+            mode_change_ = false;
+        }
+
+        trajPosture_Cubic_->setCurrentTime(time_);
+        samplePosture_ = trajPosture_Cubic_->computeNext();
+        postureTask_->setReference(samplePosture_);
+
+        trajEE_Cubic_->setCurrentTime(time_);
+        sampleEE_ = trajEE_Cubic_->computeNext();
+        eeTask_->setReference(sampleEE_);
+
+        const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
+        state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
         }
 
         if (ctrl_mode_ == 99){ //p //print current ee state
