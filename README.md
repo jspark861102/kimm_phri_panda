@@ -44,8 +44,8 @@ roslaunch kimm_phri_panda ns0_simulation.launch note_book:=true
 ### 2.1 Real Robot
 ```bash
 # 1. unknown object parameter estimation
-roslaunch ns0_object_parameter_estimator.launch
+roslaunch kimm_phri_panda ns0_object_parameter_estimator.launch
 
 # 2. human-robot collaborative transportation and task
-roslaunch ns0_real_robot.launch
+roslaunch kimm_phri_panda ns0_real_robot.launch
 ```
