@@ -6,10 +6,6 @@ KIMM pHRI application with Padna Robot Arm
 ```bash
 git clone https://github.com/jspark861102/kimm_qpoases.git -b melodic
 git clone https://github.com/jspark861102/kimm_hqp_controller_phri.git -b melodic
-git clone https://github.com/jspark861102/weightedhqp.git -b melodic
-git clone https://github.com/jspark861102/kimm_path_planner.git -b melodic
-git clone https://github.com/jspark861102/kimm_joint_planner_ros_interface.git -b melodic
-git clone https://github.com/jspark861102/kimm_se3_planner_ros_interface.git -b melodic
 git clone https://github.com/jspark861102/kimm_trajectory_smoother.git -b melodic
 ```
 
