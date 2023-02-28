@@ -32,14 +32,6 @@
 // #include <kimm_hqp_controller/solver/util.hpp> //multiple definition problem
 #include <kimm_hqp_controller/math/util.hpp>
 
-// service 
-#include "kimm_joint_planner_ros_interface/action_joint_path.h"
-#include "kimm_se3_planner_ros_interface/action_se3_path.h"
-#include "kimm_path_planner_ros_interface/action_mobile_path.h"
-#include "kimm_joint_planner_ros_interface/JointAction.h"
-#include "kimm_se3_planner_ros_interface/SE3Action.h"
-#include "kimm_path_planner_ros_interface/MobileTrajectory.h"
-
 using namespace std;
 using namespace Eigen;
 
@@ -132,50 +124,7 @@ namespace RobotController{
             void state(State & state_robot){
                 state_robot = state_;
             }
-            bool reset_control_;
-
-            void jointActionCallback(const kimm_joint_planner_ros_interface::JointActionConstPtr &msg){
-                ROS_WARN("jointActionRecieved");
-                joint_action_.kp_.setZero(7);
-                joint_action_.kd_.setZero(7);
-                joint_action_.q_target_.setZero(7);
-                joint_action_.duration_ = msg->duration;
-
-                for (int i=0; i<na_-2; i++){
-                        joint_action_.kp_(i) = msg->kp[i];
-                        joint_action_.kd_(i) = msg->kv[i];
-                        joint_action_.q_target_(i) = msg->target_joint[0].position[i];
-                }
-                
-                joint_action_.type_ = msg->traj_type;
-                joint_action_.is_succeed_ = false;
-            };
-            void se3ActionCallback(const kimm_se3_planner_ros_interface::SE3ActionConstPtr &msg){
-                ROS_WARN("SE3ActionRecieved");
-                se3_action_.kp_.setZero(6);
-                se3_action_.kd_.setZero(6);
-                
-                se3_action_.se3_target_.translation()(0) = msg->target_se3[0].translation.x;
-                se3_action_.se3_target_.translation()(1) = msg->target_se3[0].translation.y;
-                se3_action_.se3_target_.translation()(2) = msg->target_se3[0].translation.z;
-                Eigen::Quaterniond quat;
-                quat.x() = msg->target_se3[0].rotation.x;
-                quat.y() = msg->target_se3[0].rotation.y;
-                quat.z() = msg->target_se3[0].rotation.z;
-                quat.w() = msg->target_se3[0].rotation.w;
-                quat.normalize();
-                se3_action_.se3_target_.rotation() = quat.toRotationMatrix();
-                se3_action_.duration_ = msg->duration;
-
-                for (int i=0; i<6; i++){
-                    se3_action_.kp_(i) = msg->kp[i];
-                    se3_action_.kd_(i) = msg->kv[i];
-                }
-                
-                se3_action_.type_ = msg->traj_type;
-                se3_action_.is_wholebody_ = msg->iswholebody.data;
-                se3_action_.is_succeed_ = false;
-            };
+            bool reset_control_;  
 
         private:
             bool issimulation_, mode_change_, update_weight_, planner_res_;

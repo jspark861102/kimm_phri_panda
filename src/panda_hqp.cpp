@@ -123,8 +123,6 @@ namespace RobotController{
         solver_ = SolverHQPFactory::createNewSolver(SOLVER_HQP_QPOASES, "qpoases");
 
         // service
-        joint_action_subs_ = n_node_.subscribe("/" + robot_node_ + "_gui/kimm_joint_planner_ros_interface_server/joint_action", 1, &RobotController::FrankaWrapper::jointActionCallback, this);
-        se3_action_subs_ = n_node_.subscribe("/" + robot_node_ + "_gui/kimm_se3_planner_ros_interface_server/se3_action", 1, &RobotController::FrankaWrapper::se3ActionCallback, this);        
         reset_control_ = true;
         planner_res_ = false;
     }
