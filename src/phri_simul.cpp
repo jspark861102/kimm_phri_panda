@@ -72,9 +72,9 @@ int main(int argc, char **argv)
         ctrl_->g_joint7(robot_g_local_);  //g [m/s^2] w.r.t joint7 axis
         ctrl_->state(state_);           
 
-        ctrl_->JWorld(robot_J_world_);            //world
-        ctrl_->JLocal_offset(robot_J_local_);     //offset applied ,local
-        ctrl_->dJLocal_offset(robot_dJ_local_);   //offset applied ,local
+        ctrl_->JWorld(robot_J_world_);     //world
+        ctrl_->JLocal(robot_J_local_);     //local
+        ctrl_->dJLocal(robot_dJ_local_);   //local
 
         // get control input from hqp controller
         ctrl_->franka_output(franka_qacc_); //get control input
@@ -115,14 +115,14 @@ void vel_accel_pub(){
     //************* obtained from pinocchio ***********// 
     //**** velocity (data.v) is identical with mujoco velocity, 
     //**** but acceleration (data.a) is not reasnoble for both local and global cases.
-    // ctrl_->velocity(vel_param);                //offset is applied, LOCAL
-    // ctrl_->acceleration(acc_param);            //offset is applied, LOCAL
+    // ctrl_->velocity(vel_param);                //LOCAL
+    // ctrl_->acceleration(acc_param);            //LOCAL
     
-    // ctrl_->velocity_global(vel_param);         //offset is applied, GLOBAL
-    // ctrl_->acceleration_global(acc_param);     //offset is applied, GLOBAL        
+    // ctrl_->velocity_global(vel_param);         //GLOBAL
+    // ctrl_->acceleration_global(acc_param);     //GLOBAL        
     
-    // ctrl_->velocity_origin(vel_param);         //offset is not applied, GLOBAL  --> if offset is zero, velocity_global = velocity_orign
-    // ctrl_->acceleration(acc_param);            //offset not is applied, GLOBAL  --> if offset is zero, acceleration_global = acceleration_orign    
+    // ctrl_->velocity_origin(vel_param);         //GLOBAL
+    // ctrl_->acceleration(acc_param);            //GLOBAL
 
     //************* obtained from mujoco : LOCAL **************//
     vel_param.linear()[0] = v_mujoco[0];
@@ -344,7 +344,7 @@ void JointStateCallback(const sensor_msgs::JointState::ConstPtr& msg){
     double RC = 1.0 / (cutoff * 2.0 * M_PI);    
     double alpha = dt / (RC + dt);
 
-    a_mujoco_filtered = alpha * a_mujoco + (1 - alpha) * a_mujoco_filtered;        
+    a_mujoco_filtered = alpha * a_mujoco + (1 - alpha) * a_mujoco_filtered;            
 }
 
 void joint_states_publish(const sensor_msgs::JointState& msg){
@@ -474,7 +474,7 @@ void keyboard_event(){
                 cout << " " << endl;
                 cout << "f_ext test" << endl;
                 cout << " " << endl;
-                break;       
+                break;                   
             case 'o': //object estimation
                 if (isstartestimation){
                     cout << "end estimation" << endl;

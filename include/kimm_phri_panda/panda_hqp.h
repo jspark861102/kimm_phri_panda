@@ -92,22 +92,21 @@ namespace RobotController{
             void position(pinocchio::SE3 & oMi);
             void com(Eigen::Vector3d& com);
             void velocity(pinocchio::Motion& vel);
-            void velocity_origin(pinocchio::Motion& vel);
-            void velocity_global(pinocchio::Motion& vel);
+            void velocity_origin(pinocchio::Motion& vel);            
             void acceleration(pinocchio::Motion& accel);
             void acceleration_origin(pinocchio::Motion & accel);
-            void acceleration_global(pinocchio::Motion & accel);
+            void acceleration_origin2(pinocchio::Motion & accel);
             void force(pinocchio::Force & force);
             void force_origin(pinocchio::Force & force);
-            void force_global(pinocchio::Force & force);
+            void force_origin2(pinocchio::Force & force);
             void tau(VectorXd & tau_vec);
             void ddq(VectorXd & ddq_vec);
 
             void mass(MatrixXd & mass_mat);
             void nle(VectorXd & nle_vec);
             void JWorld(MatrixXd & J);
-            void JLocal_offset(MatrixXd & Jo);
-            void dJLocal_offset(MatrixXd & dJo);
+            void JLocal(MatrixXd & Jo);
+            void dJLocal(MatrixXd & dJo);
             void g(VectorXd & g_vec);
             void g_joint7(VectorXd & g_vec);
 
@@ -127,21 +126,21 @@ namespace RobotController{
             bool reset_control_;  
 
         private:
-            bool issimulation_, mode_change_, update_weight_, planner_res_;
+            bool issimulation_, mode_change_, update_weight_;
             double stime_, time_, node_index_, node_num_, prev_node_;
             std::string robot_node_;
             State state_;
             Joint_Action joint_action_;
-            SE3_Action se3_action_;            
+            SE3_Action se3_action_;                  
 
             ros::Subscriber joint_action_subs_, se3_action_subs_, mobile_action_subs_;
         
             int ctrl_mode_;
             Eigen::VectorXd q_ref_;
-            pinocchio::SE3 H_ee_ref_, H_mobile_ref_;
+            pinocchio::SE3 H_ee_ref_, H_mobile_ref_, T_offset_;
             Vector3d ee_offset_;
-            MatrixXd Adj_mat;
-            double est_time;
+            MatrixXd Adj_mat_;
+            double est_time_;
 
             //hqp
             std::shared_ptr<kimmhqp::robot::RobotWrapper> robot_;

@@ -280,8 +280,8 @@ void ObjectParameterEstimator::update(const ros::Time& time, const ros::Duration
   //for object estimation--------------------//
   // ctrl_->ddq(franka_ddq_);               //ddq is obtained from pinocchio ABA algorithm
   ctrl_->g_joint7(robot_g_local_);    
-  ctrl_->JLocal_offset(robot_J_local_);     //offset applied ,local joint7
-  ctrl_->dJLocal_offset(robot_dJ_local_);   //offset applied ,local joint7
+  ctrl_->JLocal(robot_J_local_);     //local joint7
+  ctrl_->dJLocal(robot_dJ_local_);   //local joint7
 
   // ctrl_->mass(robot_mass_);              //use franka api mass, not pinocchio mass
   robot_mass_(4, 4) *= 6.0;                 //practical term? for gain tuining?
@@ -461,14 +461,14 @@ void ObjectParameterEstimator::vel_accel_pub(){
     //************* obtained from pinocchio ***********// 
     //**** velocity (data.v) is identical with franka velocity dq_filtered_, 
     //**** but acceleration (data.a) is not reasnoble for both local and global cases.
-    // ctrl_->velocity(vel_param);                //offset is applied, LOCAL
-    // ctrl_->acceleration(acc_param);            //offset is applied, LOCAL
+    // ctrl_->velocity(vel_param);                //LOCAL
+    // ctrl_->acceleration(acc_param);            //LOCAL
     
-    // ctrl_->velocity_global(vel_param);         //offset is applied, GLOBAL
-    // ctrl_->acceleration_global(acc_param);     //offset is applied, GLOBAL        
+    // ctrl_->velocity_global(vel_param);         //GLOBAL
+    // ctrl_->acceleration_global(acc_param);     //GLOBAL        
     
-    // ctrl_->velocity_origin(vel_param);         //offset is not applied, GLOBAL  --> if offset is zero, velocity_global = velocity_orign
-    // ctrl_->acceleration(acc_param);            //offset not is applied, GLOBAL  --> if offset is zero, acceleration_global = acceleration_orign    
+    // ctrl_->velocity_origin(vel_param);         //GLOBAL  
+    // ctrl_->acceleration(acc_param);            //GLOBAL  
 
     //************* obtained from franka and pinocchio : LOCAL **************//            
     if (isstartestimation) { //start only when the robot is in proper state
