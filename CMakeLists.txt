@@ -14,8 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   hardware_interface
   pluginlib
-  realtime_tools
-  roscpp
+  realtime_tools  
   rospy
   roslib
   tf
@@ -39,8 +38,7 @@ catkin_package(
     geometry_msgs
     hardware_interface
     pluginlib
-    realtime_tools
-    tf
+    realtime_tools    
     roscpp
   DEPENDS Franka
 )

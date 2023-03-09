@@ -207,12 +207,12 @@ class ObjectParameterEstimator : public controller_interface::MultiInterfaceCont
     Eigen::VectorXd h, FT_measured, param, robot_g_local_;
     pinocchio::Motion vel_param, acc_param;  
     Vector7d torque_sensor_bias_, franka_ddq_for_param_, franka_dq_prev_;
-    Vector6d franka_v_, franka_a_, franka_a_filtered_, f_local_, f_local_filtered_, F_ext_bias_, F_ext_bias1_, F_ext_bias2_;
+    Vector6d franka_v_, franka_a_, franka_a_filtered_, F_ext_bias_, F_ext_bias1_, F_ext_bias2_;
     MatrixXd robot_J_local_, robot_dJ_local_;
     double m_load_;
     bool flag_;
     ros::NodeHandle n_node_;
-    bool repeatavoiding_flag_, is_Fext_coordinate_global_;
+    bool repeatavoiding_flag_;
     int msg_for_ext_bias_;
     Vector6d f_used_;
     int ext_count_;

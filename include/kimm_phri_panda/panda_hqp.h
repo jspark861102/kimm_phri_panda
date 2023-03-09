@@ -90,6 +90,7 @@ namespace RobotController{
             void franka_output(VectorXd & qacc); // joint torque of franka 
 
             void position(pinocchio::SE3 & oMi);
+            void position_offset(pinocchio::SE3 & oMi);
             void com(Eigen::Vector3d& com);
             void velocity(pinocchio::Motion& vel);
             void velocity_origin(pinocchio::Motion& vel);            
@@ -106,9 +107,12 @@ namespace RobotController{
             void nle(VectorXd & nle_vec);
             void JWorld(MatrixXd & J);
             void JLocal(MatrixXd & Jo);
+            void JLocal_offset(MatrixXd & Jo);
             void dJLocal(MatrixXd & dJo);
+            void dJLocal_offset(MatrixXd & dJo);
             void g(VectorXd & g_vec);
             void g_joint7(VectorXd & g_vec);
+            void g_local_offset(VectorXd & g_vec);
 
             void ee_state(Vector3d & pos, Eigen::Quaterniond & quat);
 
@@ -141,6 +145,7 @@ namespace RobotController{
             Vector3d ee_offset_;
             MatrixXd Adj_mat_;
             double est_time_;
+            double joint7_to_finger_;
 
             //hqp
             std::shared_ptr<kimmhqp::robot::RobotWrapper> robot_;

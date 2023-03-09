@@ -68,13 +68,16 @@ int main(int argc, char **argv)
         // get output
         ctrl_->mass(robot_mass_);
         ctrl_->nle(robot_nle_);
-        ctrl_->g(robot_g_);  // dim model.nv, [Nm]
-        ctrl_->g_joint7(robot_g_local_);  //g [m/s^2] w.r.t joint7 axis
+        ctrl_->g(robot_g_);  // dim model.nv, [Nm]        
         ctrl_->state(state_);           
-
         ctrl_->JWorld(robot_J_world_);     //world
-        ctrl_->JLocal(robot_J_local_);     //local
-        ctrl_->dJLocal(robot_dJ_local_);   //local
+        
+        // ctrl_->g_joint7(robot_g_local_);  //g [m/s^2] w.r.t joint7 axis
+        // ctrl_->JLocal(robot_J_local_);     //local
+        // ctrl_->dJLocal(robot_dJ_local_);   //local
+        ctrl_->g_local_offset(robot_g_local_);  
+        ctrl_->JLocal_offset(robot_J_local_);     //local
+        ctrl_->dJLocal_offset(robot_dJ_local_);   //local
 
         // get control input from hqp controller
         ctrl_->franka_output(franka_qacc_); //get control input
@@ -118,11 +121,8 @@ void vel_accel_pub(){
     // ctrl_->velocity(vel_param);                //LOCAL
     // ctrl_->acceleration(acc_param);            //LOCAL
     
-    // ctrl_->velocity_global(vel_param);         //GLOBAL
-    // ctrl_->acceleration_global(acc_param);     //GLOBAL        
-    
     // ctrl_->velocity_origin(vel_param);         //GLOBAL
-    // ctrl_->acceleration(acc_param);            //GLOBAL
+    // ctrl_->acceleration_origin2(acc_param);     //GLOBAL                
 
     //************* obtained from mujoco : LOCAL **************//
     vel_param.linear()[0] = v_mujoco[0];
@@ -216,8 +216,11 @@ void ObjectParameter_pub(){
 
     Eigen::Vector3d com_global;
     SE3 oMi;
-    ctrl_->position(oMi);
+    
+    // ctrl_->position(oMi);
+    ctrl_->position_offset(oMi);
     oMi.translation().setZero();
+
     com_global = oMi.act(Vector3d(param[1], param[2], param[3])); //local to global         
     
     // com_global[2] += (0.1654-0.035); //from l_husky_with_panda_hand.xml, (0.1654:l_panda_rightfinger pos, 0.035: l_panda_rightfinger's cls pos)    

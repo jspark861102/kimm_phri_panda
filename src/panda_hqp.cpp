@@ -78,10 +78,12 @@ namespace RobotController{
         postureTask_->Kp(posture_gain);
         postureTask_->Kd(2.0*postureTask_->Kp().cwiseSqrt());
         
+        //////////////////// EE offset ////////////////////////////////////////
         //When offset is applied, the control characteristics seems to be changed (gain tuning is needed)
         //This offset is applied to both reference (in this code) and feedback (in task_se3_equality.cpp)
-        Vector3d ee_offset(0.0, 0, 0.2054); //0.2054 (z-axis) = 0.107(distance from joint7 to hand) + 0.0584(hand length) + 0.04(finger length) 
-        ee_offset_ << ee_offset; //offset is in LOCAL w.r.t. joint7
+        joint7_to_finger_ = 0.2054; //0.2054 (z-axis) = 0.107(distance from joint7 to hand) + 0.0584(hand length) + 0.04(finger length)         
+        ee_offset_ << 0.0, 0.0, joint7_to_finger_; //offset is applied w.r.t. joint7 LOCAL coordinate
+        // ee_offset_ << 0.0, 0.0, 0.0; //offset is applied w.r.t. joint7 LOCAL coordinate
         
         T_offset_.setIdentity();
         T_offset_.translation(ee_offset_);                
@@ -94,6 +96,8 @@ namespace RobotController{
         Adj_mat_(1, 5) = -ee_offset_(0);
         Adj_mat_(2, 3) = -ee_offset_(1);
         Adj_mat_(2, 4) = ee_offset_(0);
+        Adj_mat_.topRightCorner(3,3) = -Adj_mat_.topRightCorner(3,3);  //due to "A cross B = -B cross A"
+        ///////////////////////////////////////////////////////////////////////        
 
         VectorXd ee_gain(6);
         if (ee_offset_(0) != 0.0 | ee_offset_(1) != 0.0 | ee_offset_(2) != 0.0){         
@@ -132,7 +136,7 @@ namespace RobotController{
         solver_ = SolverHQPFactory::createNewSolver(SOLVER_HQP_QPOASES, "qpoases");
 
         // service
-        reset_control_ = true;        
+        reset_control_ = true;                    
     }
 
     void FrankaWrapper::franka_update(const sensor_msgs::JointState& msg){ //for simulation (mujoco)
@@ -170,7 +174,7 @@ namespace RobotController{
         time_ = time;
 
         robot_->computeAllTerms(data_, state_.q_, state_.v_);
-        // robot_->computeAllTerms_ABA(data_, state_.q_, state_.v_, state_.tau_); //to try to use data.ddq (only computed from ABA)
+        // robot_->computeAllTerms_ABA(data_, state_.q_, state_.v_, state_.tau_); //to try to use data.ddq (only computed from ABA) However,the ddq value with ABA is not reasonalbe.        
 
         if (ctrl_mode_ == 0){ //g // gravity mode
             state_.torque_.setZero();
@@ -231,18 +235,14 @@ namespace RobotController{
                 //ee
                 trajEE_Cubic_->setStartTime(time_);
                 trajEE_Cubic_->setDuration(2.0);
-                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                
-                
-                cout << H_ee_ref_ << endl;                                
 
+                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                                                
                 trajEE_Cubic_->setInitSample(H_ee_ref_);
                 H_ee_ref_.translation()(0) += 0.1;                
                 trajEE_Cubic_->setGoalSample(H_ee_ref_);
 
-                cout << H_ee_ref_ << endl;
-
                 reset_control_ = false;
-                mode_change_ = false;
+                mode_change_ = false;                
             }
 
             trajPosture_Cubic_->setCurrentTime(time_);
@@ -254,7 +254,7 @@ namespace RobotController{
             eeTask_->setReference(sampleEE_);
 
             const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
-            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));               
+            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));            
         }
         if (ctrl_mode_ == 3){ //s //home and align base and joint7 coordinate
             if (mode_change_){     
@@ -350,7 +350,7 @@ namespace RobotController{
             eeTask_->setReference(sampleEE_);
 
             const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
-            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
+            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));            
         }
         if (ctrl_mode_ == 5){ //f //rotate ee with sine motion for object estimation
             if (mode_change_){
@@ -429,7 +429,7 @@ namespace RobotController{
                 tsid_->removeTask("task-posture");
                 tsid_->removeTask("task-torque-bounds");
 
-                //tsid_->addMotionTask(*postureTask_, 1e-2, 1);
+                // tsid_->addMotionTask(*postureTask_, 1e-2, 1);
                 // tsid_->addMotionTask(*torqueBoundsTask_, 1.0, 0);
                 tsid_->addMotionTask(*eeTask_, 1, 0);
 
@@ -520,35 +520,30 @@ namespace RobotController{
         oMi = robot_->position(data_, robot_->model().getJointId("panda_joint7"));
     }
 
+    void FrankaWrapper::position_offset(pinocchio::SE3 & oMi){
+        //API:Vector of absolute joint placements (wrt the world).
+        oMi = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;
+    }
+
     void FrankaWrapper::velocity(pinocchio::Motion & vel){
         //API:Vector of joint velocities expressed at the centers of the joints.
         vel = robot_->velocity(data_, robot_->model().getJointId("panda_joint7"));
 
         // NOTES ////////////////////////////////////////////////////////////////////////////
         // data.v = f.placement.actInv(data.v[f.parent]), both are in LOCAL coordinate
-        // The resualts of applying Adj_mat_ in velocity is the same with T_offset.act(v_frame)
+        // T_offset.act(v_frame) is WRONG method, It means that applying offset w.r.t. global coord. to EE frame.                
         //////////////////////////////////////////////////////////////////////////////////////
 
         // code comparison ///////////////////////////
         // w/o offset, three resaults are identical 
         // w/ offset, last two resaults are identical
-        //////////////////////////////////////////////
-        
-        // Motion v_frame;
-        // SE3 T_offset;
-        // T_offset.setIdentity();
-        // T_offset.translation(ee_offset_);
-        // robot_->frameVelocity(data_, robot_->model().getFrameId("panda_joint7"), v_frame);        
-        
+        //////////////////////////////////////////////                                
         // cout << "data.v" << endl;
-        // cout <<  robot_->velocity(data_, robot_->model().getJointId("panda_joint7")) << endl;
+        // cout <<  robot_->velocity(data_, robot_->model().getJointId("panda_joint7")) << endl;        
 
-        // cout << "T_offset.act(v_frame)" << endl;
-        // cout << T_offset.act(v_frame) << endl;
-
-        // cout << "v_frame with Adj_mat_" << endl;
-        // cout << v_frame.linear() + Adj_mat_.topRightCorner(3,3) * v_frame.angular() << endl;
-        // cout << v_frame.angular() << endl;
+        // cout << "data.v with Adj_mat_" << endl;
+        // cout << vel.linear() + Adj_mat_.topRightCorner(3,3) * vel.angular() << endl;
+        // cout << vel.angular() << endl;        
     }
 
     void FrankaWrapper::velocity_origin(pinocchio::Motion & vel){
@@ -608,6 +603,7 @@ namespace RobotController{
     void FrankaWrapper::ddq(VectorXd & ddq_vec){
         //API:The joint accelerations computed from ABA.
         //It is not available (output always zero), will be available with ABA method
+        //even though with ABA method, the value is not reasonable (behave like torque, not ddq)
         ddq_vec = robot_->jointAcceleration(data_).tail(na_);
     }
 
@@ -629,9 +625,21 @@ namespace RobotController{
         // g_global << 0.0, 0.0, -9.81;
         g_global << 0.0, 0.0, 9.81;
         
-        SE3 m_wMl;        
+        SE3 m_wMl;                
         robot_->framePosition(data_, robot_->model().getFrameId("panda_joint7"), m_wMl);
         m_wMl.translation() << 0.0, 0.0, 0.0; //transform only with rotation
+        g_vec = m_wMl.actInv(g_global);
+    }
+
+    void FrankaWrapper::g_local_offset(VectorXd & g_vec){
+        Vector3d g_global;
+        // g_global << 0.0, 0.0, -9.81;
+        g_global << 0.0, 0.0, 9.81;
+        
+        SE3 m_wMl;                
+        m_wMl = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;
+        m_wMl.translation() << 0.0, 0.0, 0.0; //transform only with rotation
+        
         g_vec = m_wMl.actInv(g_global);
     }
 
@@ -649,11 +657,27 @@ namespace RobotController{
         Jo = Jo2.bottomRightCorner(6, 7);
     }
 
+    void FrankaWrapper::JLocal_offset(MatrixXd & Jo){
+        Data::Matrix6x Jo2;        
+        Jo2.resize(6, robot_->nv());
+        robot_->frameJacobianLocal(data_, robot_->model().getFrameId("panda_joint7"), Jo2);        
+        Jo = Jo2.bottomRightCorner(6, 7);
+        Jo = Adj_mat_ * Jo;
+    }
+
     void FrankaWrapper::dJLocal(MatrixXd & dJo){
         Data::Matrix6x dJo2;        
         dJo2.resize(6, robot_->nv());
         robot_->frameJacobianTimeVariationLocal(data_, robot_->model().getFrameId("panda_joint7"), dJo2);        
         dJo = dJo2.bottomRightCorner(6, 7);
+    }
+
+    void FrankaWrapper::dJLocal_offset(MatrixXd & dJo){
+        Data::Matrix6x dJo2;        
+        dJo2.resize(6, robot_->nv());
+        robot_->frameJacobianTimeVariationLocal(data_, robot_->model().getFrameId("panda_joint7"), dJo2);        
+        dJo = dJo2.bottomRightCorner(6, 7);
+        dJo = Adj_mat_ * dJo;
     }
 
     void FrankaWrapper::ee_state(Vector3d & pos, Eigen::Quaterniond & quat){
