@@ -457,18 +457,25 @@ void keyboard_event(){
                 cout << "home and axis align btw base and joint 7" << endl;
                 cout << " " << endl;
                 break;    
-            case 'd': //rotate ee
+            case 'q': //rotate ee
                 msg = 4;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
-                cout << "rotate ee" << endl;
+                cout << "rotate ee in -y aixs" << endl;
                 cout << " " << endl;
                 break;  
-            case 'f': //sine motion ee
+            case 'w': //rotate ee
                 msg = 5;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
-                cout << "sine motion ee" << endl;
+                cout << "rotate ee in -x axis" << endl;
+                cout << " " << endl;
+                break;
+            case 'e': //sine motion ee
+                msg = 6;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "sine motion ee in -x axis" << endl;
                 cout << " " << endl;
                 break;               
             case 't': //f_ext test
@@ -477,7 +484,21 @@ void keyboard_event(){
                 cout << " " << endl;
                 cout << "f_ext test" << endl;
                 cout << " " << endl;
-                break;                   
+                break;          
+            case 'u': //move ee +0.1z
+                msg = 31;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "move ee +0.1 z" << endl;
+                cout << " " << endl;
+                break;         
+            case 'j': //move ee -0.1z
+                msg = 32;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "move ee -0.1 z" << endl;
+                cout << " " << endl;
+                break;                                   
             case 'o': //object estimation
                 if (isstartestimation){
                     cout << "end estimation" << endl;

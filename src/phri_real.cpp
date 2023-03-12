@@ -480,15 +480,7 @@ void BasicFrankaController::modeChangeReaderProc(){
           cout << " " << endl;
           cout << "move ee +0.1 x" << endl;
           cout << " " << endl;
-          break;    
-        case 'q': //move ee -0.1x
-          msg = 30;
-          ctrl_->ctrl_update(msg);          
-
-          cout << " " << endl;
-          cout << "move ee -0.3 x" << endl;
-          cout << " " << endl;
-          break;       
+          break;               
       case 't': //f_ext test
           msg = 20;
           ctrl_->ctrl_update(msg);
@@ -497,25 +489,7 @@ void BasicFrankaController::modeChangeReaderProc(){
           cout << " " << endl;
           cout << "f_ext test" << endl;
           cout << " " << endl;
-          break;       
-      case 'y': //f_ext test
-          msg = 20;
-          ctrl_->ctrl_update(msg);
-          mob_type_ = 2;
-
-          cout << " " << endl;
-          cout << "f_ext test" << endl;
-          cout << " " << endl;
-          break;       
-      case 'u': //f_ext test
-          msg = 20;
-          ctrl_->ctrl_update(msg);
-          mob_type_ = 0;
-
-          cout << " " << endl;
-          cout << "f_ext test" << endl;
-          cout << " " << endl;
-          break;             
+          break;                 
       case 'p': //print current EE state
           msg = 99;
           ctrl_->ctrl_update(msg);

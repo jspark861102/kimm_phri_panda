@@ -886,31 +886,27 @@ void ObjectParameterEstimator::modeChangeReaderProc(){
           cout << "home position" << endl;
           cout << " " << endl;
           break;      
-      case 's': //home and axis align btw base and joint 7
-          msg = 3;
-          ctrl_->ctrl_update(msg);          
-
-          cout << " " << endl;
-          cout << "home and axis align btw base and joint 7" << endl;
-          cout << " " << endl;
-          break;    
-      case 'd': //rotate ee
+      case 'q': //rotate ee
           msg = 4;
-          msg_for_ext_bias_ = msg;
-          ctrl_->ctrl_update(msg);          
-
+          ctrl_->ctrl_update(msg);
           cout << " " << endl;
-          cout << "rotate ee" << endl;
+          cout << "rotate ee in -y aixs" << endl;
           cout << " " << endl;
           break;  
-      case 'f': //sine motion ee
+      case 'w': //rotate ee
           msg = 5;
-          ctrl_->ctrl_update(msg);          
-
+          ctrl_->ctrl_update(msg);
           cout << " " << endl;
-          cout << "sine motion ee" << endl;
+          cout << "rotate ee in -x axis" << endl;
           cout << " " << endl;
-          break;          
+          break;
+      case 'e': //sine motion ee
+          msg = 6;
+          ctrl_->ctrl_update(msg);
+          cout << " " << endl;
+          cout << "sine motion ee in -x axis" << endl;
+          cout << " " << endl;
+          break;               
       case 'o': //object estimation
           if (isstartestimation){
               cout << "end estimation" << endl;
