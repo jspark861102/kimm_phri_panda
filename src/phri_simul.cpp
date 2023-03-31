@@ -20,6 +20,7 @@ int main(int argc, char **argv)
     // ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node);
     ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node, 0);
     ctrl_->initialize();
+    ctrl_->get_dt(dt);
     
     /////////////// mujoco sub : from mujoco to here ///////////////    
     ros::Subscriber jointState = n_node.subscribe("mujoco_ros/mujoco_ros_interface/joint_states", 5, &JointStateCallback, ros::TransportHints().tcpNoDelay(true));    
@@ -170,7 +171,9 @@ void FT_measured_pub() {
     tau_estimated = robot_mass_ * ddq_mujoco + robot_nle_;        
     // tau_ext = franka_torque_ - tau_estimated;      // coincide with g(0,0,-9.81)  
     tau_ext = -franka_torque_ + tau_estimated;        // coincide with g(0,0,9.81)
-    FT_measured = robot_J_local_.transpose().completeOrthogonalDecomposition().pseudoInverse() * tau_ext;  //robot_J_local is local jacobian      
+    FT_measured = robot_J_local_.transpose().completeOrthogonalDecomposition().pseudoInverse() * tau_ext;  //robot_J_local is local jacobian  
+
+    ctrl_->Fext_update(FT_measured);    
 
     geometry_msgs::Wrench FT_measured_msg;  
     FT_measured_msg.force.x = saturation(FT_measured[0],50);
@@ -478,6 +481,20 @@ void keyboard_event(){
                 cout << "sine motion ee in -x axis" << endl;
                 cout << " " << endl;
                 break;               
+            case 'd': //null motion ee
+                msg = 7;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "null motion ee in -x axis" << endl;
+                cout << " " << endl;
+                break;    
+            case 'f': //align control
+                msg = 8;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "align control" << endl;
+                cout << " " << endl;
+                break;                          
             case 't': //f_ext test
                 msg = 20;
                 ctrl_->ctrl_update(msg);

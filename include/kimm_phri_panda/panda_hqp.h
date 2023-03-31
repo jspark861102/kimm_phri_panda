@@ -36,6 +36,7 @@ using namespace std;
 using namespace Eigen;
 
 typedef Eigen::Matrix<double, 7, 1> Vector7d;
+typedef Eigen::Matrix<double, 6, 1> Vector6d;
 
 typedef struct State {   
     VectorXd q_;
@@ -84,7 +85,7 @@ namespace RobotController{
             void franka_update(const sensor_msgs::JointState&); // franka state update //for simulation
             void franka_update(const Vector7d&, const Vector7d&); // franka state update //for experiment            
             void franka_update(const Vector7d& q, const Vector7d& qdot, const Vector7d& tau); // franka state update //for experiment
-
+            void Fext_update(const Vector6d& Fext); //for simulation & experiment
 
             void compute(const double &); // computation by hqp controller
             void franka_output(VectorXd & qacc); // joint torque of franka 
@@ -120,6 +121,11 @@ namespace RobotController{
             void roty(double & a, Eigen::Matrix3d & rot);
             void rotz(double & a, Eigen::Matrix3d & rot);
 
+            MatrixXd skew_matrix(const VectorXd& vec);
+            pinocchio::SE3 vel_to_SE3(VectorXd vel, double dt); 
+            void get_dt(double dt);
+            double noise_elimination(double x, double limit);
+
             int ctrltype(){
                 return ctrl_mode_;
             }
@@ -130,7 +136,7 @@ namespace RobotController{
             bool reset_control_;  
 
         private:
-            bool issimulation_, mode_change_, update_weight_;
+            bool issimulation_, mode_change_, update_weight_, trjectory_end_;
             double stime_, time_, node_index_, node_num_, prev_node_;
             std::string robot_node_;
             State state_;
@@ -141,11 +147,13 @@ namespace RobotController{
         
             int ctrl_mode_;
             Eigen::VectorXd q_ref_;
-            pinocchio::SE3 H_ee_ref_, H_mobile_ref_, T_offset_;
-            Vector3d ee_offset_;
-            MatrixXd Adj_mat_;
-            double est_time_;
+            pinocchio::SE3 H_ee_ref_, H_mobile_ref_, T_offset_, T_vel_;
+            Vector3d ee_offset_, obj_length_;
+            MatrixXd Adj_mat_, hGr_, hGr_Null_, hGr_pinv_, R_joint7_atHome_;
+            double est_time_, dt_;
             double joint7_to_finger_;
+            Vector6d Fext_, Fext_calibration_, Kf_gain_;
+            bool initial_calibration_update_;                            
 
             //hqp
             std::shared_ptr<kimmhqp::robot::RobotWrapper> robot_;
