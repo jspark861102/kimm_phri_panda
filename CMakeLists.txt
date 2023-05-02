@@ -70,7 +70,6 @@ include_directories(
 
 add_library(${PROJECT_NAME}
   src/phri_real.cpp
-  src/phri_estimation.cpp
 )
 
 add_dependencies(${PROJECT_NAME}

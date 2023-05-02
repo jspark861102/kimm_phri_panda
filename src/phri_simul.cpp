@@ -17,8 +17,7 @@ int main(int argc, char **argv)
 
     /////////////// Robot Wrapper ///////////////
     n_node.getParam("/robot_group", group_name);    
-    // ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node);
-    ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node, 0);
+    ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node);
     ctrl_->initialize();
     ctrl_->get_dt(dt);
     
@@ -48,7 +47,9 @@ int main(int argc, char **argv)
 
     sim_run_msg_.data = true;
     isgrasp_ = false;
-    isstartestimation = false;
+    isstartestimation_ = false;
+    isFextapplication_ = false;
+    isFextcalibration_ = false;
 
     // InitMob();
 
@@ -76,14 +77,38 @@ int main(int argc, char **argv)
         // ctrl_->g_joint7(robot_g_local_);  //g [m/s^2] w.r.t joint7 axis
         // ctrl_->JLocal(robot_J_local_);     //local
         // ctrl_->dJLocal(robot_dJ_local_);   //local
-        ctrl_->g_local_offset(robot_g_local_);  
+        ctrl_->g_local_offset(robot_g_local_);    //local
         ctrl_->JLocal_offset(robot_J_local_);     //local
         ctrl_->dJLocal_offset(robot_dJ_local_);   //local
 
         // get control input from hqp controller
         ctrl_->franka_output(franka_qacc_); //get control input
         franka_torque_ = robot_mass_ * franka_qacc_ + robot_nle_; 
-        
+
+        // apply object dynamics
+        param_true_ << 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0; 
+        if (isobjectdynamics_) {
+            FT_object_ = objdyn.h(param_true_, vel_param.toVector(), acc_param.toVector(), robot_g_local_); //Vector3d(0,0,9.81)
+            franka_torque_ -= robot_J_local_.transpose() * FT_object_;                                    
+        }           
+
+        // apply Fext for compliance control
+        if (isFextapplication_) {
+            if (!isFextcalibration_) {
+                Fext_cali_ << robot_J_local_.transpose().col(0) * FT_measured(0);                
+                Fext_cali_ += robot_J_local_.transpose().col(1) * FT_measured(1);                
+                Fext_cali_ += robot_J_local_.transpose().col(2) * FT_measured(2);                
+                isFextcalibration_ = true;
+                cout << Fext_cali_.transpose() << endl;
+            }
+            else {
+                franka_torque_ += 0.3*robot_J_local_.transpose().col(0) * FT_measured(0);
+                franka_torque_ += 0.3*robot_J_local_.transpose().col(1) * FT_measured(1);
+                franka_torque_ += 0.3*robot_J_local_.transpose().col(2) * FT_measured(2);
+                franka_torque_ -= 0.3*Fext_cali_;
+            }                                    
+        }
+
         // get Mob
         // if (ctrl_->ctrltype() != 0)
         //     UpdateMob();
@@ -171,10 +196,11 @@ void FT_measured_pub() {
     tau_estimated = robot_mass_ * ddq_mujoco + robot_nle_;        
     // tau_ext = franka_torque_ - tau_estimated;      // coincide with g(0,0,-9.81)  
     tau_ext = -franka_torque_ + tau_estimated;        // coincide with g(0,0,9.81)
-    FT_measured = robot_J_local_.transpose().completeOrthogonalDecomposition().pseudoInverse() * tau_ext;  //robot_J_local is local jacobian  
-
-    ctrl_->Fext_update(FT_measured);    
-
+    
+    Fext_global_ = robot_J_world_.transpose().completeOrthogonalDecomposition().pseudoInverse() * tau_ext;  //global
+    ctrl_->Fext_update(Fext_global_);        
+    
+    FT_measured = robot_J_local_.transpose().completeOrthogonalDecomposition().pseudoInverse() * tau_ext;  //local    
     geometry_msgs::Wrench FT_measured_msg;  
     FT_measured_msg.force.x = saturation(FT_measured[0],50);
     FT_measured_msg.force.y = saturation(FT_measured[1],50);
@@ -198,7 +224,7 @@ void getObjParam(){
 
     //*--- FT_measured & vel_param & acc_param is LOCAL frame ---*//
 
-    if (isstartestimation) {
+    if (isstartestimation_) {
 
         h = objdyn.h(param, vel_param.toVector(), acc_param.toVector(), robot_g_local_); //Vector3d(0,0,9.81)
         H = objdyn.H(param, vel_param.toVector(), acc_param.toVector(), robot_g_local_); //Vector3d(0,0,9.81)
@@ -215,26 +241,30 @@ void getObjParam(){
 void ObjectParameter_pub(){
     kimm_phri_msgs::ObjectParameter objparam_msg;  
     objparam_msg.com.resize(3);
-    objparam_msg.inertia.resize(6);    
-
-    Eigen::Vector3d com_global;
-    SE3 oMi;
-    
-    // ctrl_->position(oMi);
-    ctrl_->position_offset(oMi);
-    oMi.translation().setZero();
-
-    com_global = oMi.act(Vector3d(param[1], param[2], param[3])); //local to global         
-    
-    // com_global[2] += (0.1654-0.035); //from l_husky_with_panda_hand.xml, (0.1654:l_panda_rightfinger pos, 0.035: l_panda_rightfinger's cls pos)    
+    objparam_msg.inertia.resize(6);      
 
     objparam_msg.mass = saturation(param[0],5.0);
-    // objparam_msg.com[0] = saturation(param[1]*sin(M_PI/4)+param[2]*sin(M_PI/4),0.3); // need to check for transformation
-    // objparam_msg.com[1] = saturation(param[1]*cos(M_PI/4)-param[2]*cos(M_PI/4),0.3); // need to check for transformation
-    // objparam_msg.com[2] = saturation(param[3],0.3);                                  // need to check for transformation
-    objparam_msg.com[0] = saturation(com_global[0],0.6); // need to check for transformation
-    objparam_msg.com[1] = saturation(com_global[1],0.6); // need to check for transformation
-    objparam_msg.com[2] = saturation(com_global[2],0.6); // need to check for transformation
+    
+    //local coordinate--------------------//
+    objparam_msg.com[0] = saturation(param[1],0.6); 
+    objparam_msg.com[1] = saturation(param[2],0.6); 
+    objparam_msg.com[2] = saturation(param[3],0.6);  
+    //-------------------------------------//
+
+    //global coordinate--------------------//
+    // Eigen::Vector3d com_global;
+    // SE3 oMi;
+    
+    // // ctrl_->position(oMi);
+    // ctrl_->position_offset(oMi);
+    // oMi.translation().setZero();
+    // com_global = oMi.act(Vector3d(param[1], param[2], param[3])); //local to global  
+
+    // objparam_msg.com[0] = saturation(com_global[0],0.6); 
+    // objparam_msg.com[1] = saturation(com_global[1],0.6); 
+    // objparam_msg.com[2] = saturation(com_global[2],0.6); 
+    //-------------------------------------//
+
 
     object_parameter_pub_.publish(objparam_msg);              
 }
@@ -256,7 +286,11 @@ void getObjParam_init(){
     tau_ext.resize(7);
     v_mujoco.resize(6);
     a_mujoco.resize(6);
-    a_mujoco_filtered.resize(6);    
+    a_mujoco_filtered.resize(6);   
+    FT_object_.resize(6); 
+    param_true_.resize(n_param);
+    Fext_cali_.resize(7);
+    Fext_global_.resize(m_FT);
 
     A.setIdentity();         //knwon, identity
     Q.setIdentity();         //design parameter
@@ -274,6 +308,10 @@ void getObjParam_init(){
     v_mujoco.setZero();
     a_mujoco.setZero();
     a_mujoco_filtered.setZero();
+    FT_object_.setZero();
+    param_true_.setZero();
+    Fext_cali_.setZero();
+    Fext_global_.setZero();
 
     Q(0,0) *= 0.01;
     Q(1,1) *= 0.0001;
@@ -446,88 +484,124 @@ void keyboard_event(){
                 cout << "home position" << endl;
                 cout << " " << endl;
                 break;
-            case 'a': //move ee +0.1x
+            case 'a': //home and axis align btw base and joint 7
                 msg = 2;
-                ctrl_->ctrl_update(msg);
-                cout << " " << endl;
-                cout << "move ee +0.1 x" << endl;
-                cout << " " << endl;
-                break;    
-            case 's': //home and axis align btw base and joint 7
-                msg = 3;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
                 cout << "home and axis align btw base and joint 7" << endl;
                 cout << " " << endl;
-                break;    
-            case 'q': //rotate ee
-                msg = 4;
+                break;                
+            case 'w': //rotate ee in -y axis
+                msg = 11;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
                 cout << "rotate ee in -y aixs" << endl;
                 cout << " " << endl;
                 break;  
-            case 'w': //rotate ee
-                msg = 5;
+            case 'r': //rotate ee in -x axis
+                msg = 12;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
                 cout << "rotate ee in -x axis" << endl;
                 cout << " " << endl;
                 break;
-            case 'e': //sine motion ee
-                msg = 6;
+            case 't': //sine motion ee in -x axis
+                msg = 13;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
                 cout << "sine motion ee in -x axis" << endl;
                 cout << " " << endl;
                 break;               
-            case 'd': //null motion ee
-                msg = 7;
+            case 'e': //null motion ee
+                msg = 14;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
                 cout << "null motion ee in -x axis" << endl;
                 cout << " " << endl;
                 break;    
-            case 'f': //align control
-                msg = 8;
+            case 'c': //admittance control
+                msg = 21;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
-                cout << "align control" << endl;
+                cout << "admittance control" << endl;
                 cout << " " << endl;
                 break;                          
-            case 't': //f_ext test
-                msg = 20;
+            case 'v': //impedance control
+                msg = 22;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
-                cout << "f_ext test" << endl;
+                cout << "impedance control" << endl;
+                cout << " " << endl;
+                break;               
+            case 'm': //impedance control with nonzero K
+                msg = 23;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "impedance control with nonzero K" << endl;
                 cout << " " << endl;
                 break;          
-            case 'u': //move ee +0.1z
+            case 'i': //move ee +0.1z
                 msg = 31;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
                 cout << "move ee +0.1 z" << endl;
                 cout << " " << endl;
                 break;         
-            case 'j': //move ee -0.1z
+            case 'k': //move ee -0.1z
                 msg = 32;
                 ctrl_->ctrl_update(msg);
                 cout << " " << endl;
                 cout << "move ee -0.1 z" << endl;
                 cout << " " << endl;
                 break;                                   
-            case 'o': //object estimation
-                if (isstartestimation){
+                break;         
+            case 'l': //move ee +0.1x
+                msg = 33;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "move ee +0.1 x" << endl;
+                cout << " " << endl;
+                break;                                   
+            case 'j': //move ee -0.1x
+                msg = 34;
+                ctrl_->ctrl_update(msg);
+                cout << " " << endl;
+                cout << "move ee -0.1 x" << endl;
+                cout << " " << endl;
+                break;   
+            case 'q': //object estimation
+                if (isstartestimation_){
                     cout << "end estimation" << endl;
-                    isstartestimation = false;
+                    isstartestimation_ = false;
                     param.setZero();
                     ekf->init(time_, param);
                 }
                 else{
                     cout << "start estimation" << endl;
-                    isstartestimation = true; 
+                    isstartestimation_ = true; 
                 }
                 break;       
+            case 'x': //object dynamics
+                if (isobjectdynamics_){
+                    cout << "eliminate object dynamics" << endl;
+                    isobjectdynamics_ = false;                    
+                }
+                else{
+                    cout << "apply object dynamics" << endl;
+                    isobjectdynamics_ = true; 
+                }
+                break;   
+            case 'b': //apply Fext
+                if (isFextapplication_){
+                    cout << "end applying Fext" << endl;
+                    isFextapplication_ = false;                    
+                    isFextcalibration_ = false;
+                }
+                else{
+                    cout << "start applying Fext" << endl;
+                    isFextapplication_ = true; 
+                }
+                break;                       
             case 'p': //print current EE state
                 msg = 99;
                 ctrl_->ctrl_update(msg);

@@ -37,7 +37,7 @@ sensor_msgs::JointState base_state_msg_;
 
 double mujoco_time_, time_, dt;
 bool isgrasp_;
-Eigen::VectorXd franka_qacc_, husky_qacc_, robot_nle_, robot_g_, franka_torque_;
+Eigen::VectorXd franka_qacc_, husky_qacc_, robot_nle_, robot_g_, franka_torque_, Fext_cali_;
 Eigen::MatrixXd robot_mass_, robot_J_local_, robot_dJ_local_, robot_J_world_;
 string group_name;
 std_msgs::String sim_run_msg_;
@@ -61,10 +61,10 @@ void getEEState();
 EKF * ekf;
 Objdyn objdyn;
 
-bool isstartestimation;
+bool isstartestimation_, isobjectdynamics_, isFextapplication_, isFextcalibration_;
 double n_param, m_FT;
 Eigen::MatrixXd A, H, Q, R, P;
-Eigen::VectorXd h, FT_measured, param, robot_g_local_;
+Eigen::VectorXd h, FT_measured, param, robot_g_local_, FT_object_, param_true_, Fext_global_;
 pinocchio::Motion vel_param, acc_param;
 VectorXd ddq_mujoco, tau_estimated, tau_ext, v_mujoco, a_mujoco, a_mujoco_filtered;
 

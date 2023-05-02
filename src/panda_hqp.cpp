@@ -12,29 +12,21 @@ using namespace kimmhqp::robot;
 using namespace kimmhqp::contacts;
 
 namespace RobotController{
-    // FrankaWrapper::FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node)
-    FrankaWrapper::FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node, const int & ctrl_mode)
+    FrankaWrapper::FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node)
     : robot_node_(robot_node), issimulation_(issimulation), n_node_(node)
     {
         time_ = 0.;        
         node_index_ = 0;
         cnt_ = 0;
 
-        // mode_change_ = false;
-        // ctrl_mode_ = 0;
-
-        ctrl_mode_ = ctrl_mode;
-        if (ctrl_mode_ == 1)
-        {
-            mode_change_ = true;
-        }
-        else //ctrl_mode = 0
-        {
-            mode_change_ = false;
-        }                
+        mode_change_ = false;
+        ctrl_mode_ = 0;                
     }
 
     void FrankaWrapper::initialize(){
+        // Calibration Data
+        getcalibration_ = false;
+
         // Robot for pinocchio
         string model_path, urdf_name;
         n_node_.getParam("/" + robot_node_ +"/robot_urdf_path", model_path);
@@ -102,23 +94,40 @@ namespace RobotController{
         Adj_mat_.topRightCorner(3,3) = -1 * skew_matrix(ee_offset_); //due to "A cross B = -B cross A"
 
         //////////////////// human grasp position (object length) //////////////////////////////////////// 
-        obj_length_  = R_joint7_atHome_ * Vector3d(0.0, 0.4, 0.0); // 0.4 length in global y axis
+        //define object length 
+        obj_length_global_ = Vector3d(0.0, -0.4, 0.0); // 0.4 length in global y axis                                
+        obj_length_local_  = R_joint7_atHome_ * obj_length_global_; // global to local
 
-        hGr_.resize(3,6);
-        hGr_.topLeftCorner(3,3).setIdentity();         
-        hGr_.topRightCorner(3,3) = -1 * skew_matrix(obj_length_);
+        //define hGr matrix in local coordinate
+        hGr_local_.resize(3,6);
+        hGr_local_.topLeftCorner(3,3).setIdentity();         
+        hGr_local_.topRightCorner(3,3) = -1 * skew_matrix(obj_length_local_);
         
-        hGr_pinv_.resize(6,3);
-        hGr_pinv_ = hGr_.completeOrthogonalDecomposition().pseudoInverse();
+        hGr_local_pinv_.resize(6,3);
+        hGr_local_pinv_ = hGr_local_.completeOrthogonalDecomposition().pseudoInverse();
 
-        hGr_Null_.resize(6,6);
-        hGr_Null_ = MatrixXd::Identity(6,6) - hGr_pinv_* hGr_;
+        hGr_local_Null_.resize(6,6);
+        hGr_local_Null_ = MatrixXd::Identity(6,6) - hGr_local_pinv_* hGr_local_;
+
+        //define P matrix
+        P_global_.resize(6,6);
+        P_global_.setIdentity();
+        P_global_.bottomLeftCorner(3,3) = -1*skew_matrix(obj_length_global_);        
+
+        P_local_.resize(6,6);
+        P_local_.setIdentity();
+        P_local_.bottomLeftCorner(3,3) = -1*skew_matrix(obj_length_local_);
         ///////////////////////////////////////////////////////////////////////        
 
         VectorXd ee_gain(6);
         if (ee_offset_(0) != 0.0 | ee_offset_(1) != 0.0 | ee_offset_(2) != 0.0){         
-            // ee_gain << 500., 500., 500., 800., 800., 1000.;
-            ee_gain << 1000., 1000., 1000., 2000., 2000., 2000.;
+            if (!issimulation_) { //for real                
+                ee_gain << 100., 100., 100., 400., 400., 600.;                
+            }
+            else { //for simulation
+                // ee_gain << 500., 500., 500., 800., 800., 1000.;
+                ee_gain << 1000., 1000., 1000., 2000., 2000., 2000.;
+            }                        
         }
         else{
             ee_gain << 100., 100., 100., 400., 400., 600.;
@@ -126,7 +135,8 @@ namespace RobotController{
         }           
         eeTask_ = std::make_shared<TaskSE3Equality>("task-se3", *robot_, "panda_joint7", ee_offset_); //here, ee_offset_ is applied to current pos value
         eeTask_->Kp(ee_gain*Vector::Ones(6));
-        eeTask_->Kd(2.0*eeTask_->Kp().cwiseSqrt());
+        eeTask_->Kd(2.0*eeTask_->Kp().cwiseSqrt());        
+        // eeTask_->Kd(0.5*eeTask_->Kp().cwiseSqrt());                        
 
         torqueBoundsTask_ = std::make_shared<TaskJointBounds>("task-torque-bounds", *robot_);
         Vector dq_max = 500000.0*Vector::Ones(na_);
@@ -154,7 +164,29 @@ namespace RobotController{
 
         // service
         reset_control_ = true; 
-        initial_calibration_update_ = false;                   
+        initial_calibration_update_ = false; 
+          
+        //trajectory length in time for object parameter estimation
+        traj_length_in_time_ = 10.0;              
+
+        //inertia shaping --------------------------------//
+        Me_inv_.resize(6,6);
+        Me_inv_.setIdentity();                 
+        eeTask_->setDesiredinertia(Me_inv_);
+        //-----------------------------------------------//
+
+        //Fh gain in global ------------------------------//
+        Fh_.resize(6,6);    
+        Fh_.setZero();                 
+        
+        //case.1 :use translational axis        
+        Fh_.topLeftCorner(3,3).setIdentity();                
+        
+        //case. 2 : only use rx-axis to move z-axis 
+        // Fh_(2,3) = -0.4 * 5;        
+        
+        cout << Fh_ << endl;
+        //-----------------------------------------------//
     }
 
     void FrankaWrapper::franka_update(const sensor_msgs::JointState& msg){ //for simulation (mujoco)
@@ -237,50 +269,8 @@ namespace RobotController{
 
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
 
-        }        
-        if (ctrl_mode_ == 2){ //a //approach to object
-            if (mode_change_){
-                //remove                
-                tsid_->removeTask("task-se3");
-                tsid_->removeTask("task-posture");
-                tsid_->removeTask("task-torque-bounds");
-
-                //add
-                tsid_->addMotionTask(*postureTask_, 1e-16, 1);
-                tsid_->addMotionTask(*torqueBoundsTask_, 1.0, 0);
-                tsid_->addMotionTask(*eeTask_, 1.0, 0);
-
-                //posture (try to maintain current joint configuration)
-                trajPosture_Cubic_->setInitSample(state_.q_.tail(na_));
-                trajPosture_Cubic_->setDuration(2.0);
-                trajPosture_Cubic_->setStartTime(time_);
-                trajPosture_Cubic_->setGoalSample(state_.q_.tail(na_));
-
-                //ee
-                trajEE_Cubic_->setStartTime(time_);
-                trajEE_Cubic_->setDuration(2.0);
-
-                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                                                
-                trajEE_Cubic_->setInitSample(H_ee_ref_);
-                H_ee_ref_.translation()(0) += 0.1;                
-                trajEE_Cubic_->setGoalSample(H_ee_ref_);
-
-                reset_control_ = false;
-                mode_change_ = false;                
-            }
-
-            trajPosture_Cubic_->setCurrentTime(time_);
-            samplePosture_ = trajPosture_Cubic_->computeNext();
-            postureTask_->setReference(samplePosture_);
-
-            trajEE_Cubic_->setCurrentTime(time_);
-            sampleEE_ = trajEE_Cubic_->computeNext();
-            eeTask_->setReference(sampleEE_);
-
-            const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
-            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));            
-        }
-        if (ctrl_mode_ == 3){ //s //home and align base and joint7 coordinate
+        }                
+        if (ctrl_mode_ == 2){ //a //home and align base and joint7 coordinate
             if (mode_change_){     
                 //remove                           
                 tsid_->removeTask("task-se3");
@@ -316,7 +306,44 @@ namespace RobotController{
 
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
         }
-        if (ctrl_mode_ == 4){ //q //rotate ee for object estimation in -y aixs
+        if (ctrl_mode_ == 3){ //u 
+            if (mode_change_){                
+                tsid_->removeTask("task-se3");
+                tsid_->removeTask("task-posture");
+                tsid_->removeTask("task-torque-bounds");
+
+                tsid_->addMotionTask(*postureTask_, 1e-2, 1);
+                tsid_->addMotionTask(*torqueBoundsTask_, 1.0, 0);
+
+                q_ref_.setZero(7);
+                q_ref_(0) =  0.0;
+                q_ref_(1) =  0.2 * M_PI;
+                q_ref_(2) =  0.0;
+                q_ref_(3) = -0.5 * M_PI;
+                q_ref_(4) =  0.0;
+                q_ref_(5) =  1.1 * M_PI;
+                q_ref_(6) =  0.25 * M_PI;
+
+                trajPosture_Cubic_->setInitSample(state_.q_.tail(na_));
+                trajPosture_Cubic_->setDuration(2.0);
+                trajPosture_Cubic_->setStartTime(time_);
+                trajPosture_Cubic_->setGoalSample(q_ref_);
+
+                reset_control_ = false;
+                mode_change_ = false;             
+            }            
+
+            trajPosture_Cubic_->setCurrentTime(time_);
+            samplePosture_ = trajPosture_Cubic_->computeNext();
+            postureTask_->setReference(samplePosture_);
+
+            //in here, task.compute is performed right after the reference is set.
+            const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_); 
+
+            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
+
+        }   
+        if (ctrl_mode_ == 11){ //w //rotate ee for object estimation in -y aixs
             if (mode_change_){
                 //remove                
                 tsid_->removeTask("task-se3");
@@ -338,7 +365,7 @@ namespace RobotController{
                 trajEE_Cubic_->setStartTime(time_);
                 trajEE_Cubic_->setDuration(2.0);                
 
-                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;
+                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                
                 trajEE_Cubic_->setInitSample(H_ee_ref_); 
                 cout << "initial" << endl;
                 cout << H_ee_ref_ << endl;                
@@ -377,7 +404,7 @@ namespace RobotController{
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));            
         }        
 
-        if (ctrl_mode_ == 5){ //w //rotate ee for object estimation in -x axis
+        if (ctrl_mode_ == 12){ //r //rotate ee for object estimation in -x axis
             if (mode_change_){
                 //remove                
                 tsid_->removeTask("task-se3");
@@ -438,7 +465,7 @@ namespace RobotController{
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));            
         }   
 
-        if (ctrl_mode_ == 6){ //e //rotate ee with sine motion for object estimation
+        if (ctrl_mode_ == 13){ //t //rotate ee with sine motion for object estimation
             if (mode_change_){
                 //remove                
                 tsid_->removeTask("task-se3");
@@ -511,7 +538,7 @@ namespace RobotController{
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
         }   
 
-        if (ctrl_mode_ == 7){ //d //rotate ee in null space motion for object estimation
+        if (ctrl_mode_ == 14){ //e //rotate ee in null space motion for object estimation
             if (mode_change_){
                 //remove                
                 tsid_->removeTask("task-se3");
@@ -544,27 +571,45 @@ namespace RobotController{
                 est_time_ = time_;
 
                 T_vel_.setIdentity();
+
+                if (getcalibration_){
+                    fout_.open("/home/kimm/kimm_catkin/src/kimm_phri_panda/calibration/calibration_data_xy_w_y5deg.txt");
+                }
             }
             
             trajPosture_Cubic_->setCurrentTime(time_);
             samplePosture_ = trajPosture_Cubic_->computeNext();
-            postureTask_->setReference(samplePosture_);
+            postureTask_->setReference(samplePosture_);            
 
             ////////////////// 
-            if (time_ - est_time_ < 10.0){              
-                double anglex = -5*M_PI/180.0*0.4*M_PI*cos(0.4*M_PI*(time_ - est_time_));
-                double angley = -5*M_PI/180.0*0.4*M_PI*cos(0.4*M_PI*(time_ - est_time_));
+            if (time_ - est_time_ < traj_length_in_time_){              
+                // double anglex = -5*M_PI/180.0*0.4*M_PI*cos(0.4*M_PI*(time_ - est_time_));
+                // double angley = -5*M_PI/180.0*0.4*M_PI*cos(0.4*M_PI*(time_ - est_time_));
+
+                double f = 0.4;
+                // double anglex = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
+                // double angley = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
+
+                //to make global -x axis (5deg) & -y axis (5deg)
+                double anglex = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_)) -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
+                double angley = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_)) +5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
+
+
                 VectorXd vel_vec, vel_vec_pseudo, vel_vec_null;
                 
-                vel_vec_pseudo.resize(3);
-                // vel_vec_pseudo << 0.0, 0.0, 0.0;
-                vel_vec_pseudo  = R_joint7_atHome_ * Vector3d(-0.01, 0.0, 0.0); // -0.01 m/s in global x axis
+                vel_vec_pseudo.resize(3);                
+                if (getcalibration_){
+                    vel_vec_pseudo << 0.0, 0.0, 0.0;
+                }
+                else {
+                    vel_vec_pseudo  = R_joint7_atHome_ * Vector3d(-0.00, 0.0, 0.0); // -0.01 m/s in global x axis
+                }
 
                 vel_vec_null.resize(6);
                 vel_vec_null << 0.0, 0.0, 0.0, anglex, angley, 0.0;
                 
                 vel_vec.resize(6);
-                vel_vec = hGr_pinv_ * vel_vec_pseudo + hGr_Null_ * vel_vec_null;
+                vel_vec = hGr_local_pinv_ * vel_vec_pseudo + hGr_local_Null_ * vel_vec_null;
 
                 T_vel_ = T_vel_ * vel_to_SE3(vel_vec, dt_);   //velocity integration to make position
 
@@ -573,16 +618,48 @@ namespace RobotController{
                 H_EE_ref_estimation = H_EE_ref_estimation * T_vel_;                
 
                 SE3ToVector(H_EE_ref_estimation, sampleEE_.pos);
+
+                if (getcalibration_){
+                    fout_ << Fext_.transpose() << "\n";
+                }
             }
             else{                
-                if (!trjectory_end_){
-                    H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                
-                    SE3ToVector(H_ee_ref_, sampleEE_.pos); //main current pos
+                // maintain current pos after the trajecto is finished --------------------------------//
+                // if (!trjectory_end_){
+                //     H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                
+                //     SE3ToVector(H_ee_ref_, sampleEE_.pos); //main current pos
+                //     trjectory_end_ = true;
+                //
+                //        // if (getcalibration__{
+                //        //     fout_.close();   
+                //        // }       
+                // }
+                // else {
+                //     SE3ToVector(H_ee_ref_, sampleEE_.pos); 
+                // }             
+                // ------------------------------------------------------------------------------------//
+                
+                // maintain zero velocity after the trajecto is finished to avoid hard stop -----------//
+                if (!trjectory_end_){                    
                     trjectory_end_ = true;
+                    
+                    if (getcalibration_) {
+                        fout_.close();          
+                    }
                 }
-                else {
-                    SE3ToVector(H_ee_ref_, sampleEE_.pos); 
-                }
+
+                VectorXd vel_vec;
+                vel_vec.resize(6);
+                vel_vec.setZero();                
+
+                T_vel_ = T_vel_ * vel_to_SE3(vel_vec, dt_);   //velocity integration to make position
+
+                pinocchio::SE3 H_EE_ref_estimation;
+                H_EE_ref_estimation = H_ee_ref_;                
+                H_EE_ref_estimation = H_EE_ref_estimation * T_vel_;                
+
+                SE3ToVector(H_EE_ref_estimation, sampleEE_.pos);
+                // ------------------------------------------------------------------------------------//
             }
 
             eeTask_->setReference(sampleEE_);
@@ -592,7 +669,7 @@ namespace RobotController{
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
         }   
 
-        if (ctrl_mode_ == 8){ //f //algin control
+        if (ctrl_mode_ == 21){ //c //admittance control
             if (mode_change_){
                 //remove                
                 tsid_->removeTask("task-se3");
@@ -624,7 +701,9 @@ namespace RobotController{
                 est_time_ = time_;      
                 initial_calibration_update_ = false;          
                 
-                Kf_gain_ << 0.0, 0.0, 0.0, 0.00001, 0.0, 0.0; 
+                //damping gain for addmittance control
+                Dinv_gain_ << 0.01, 0.01, 0.01, 0.01, 0.01, 0.03; 
+                Dinv_gain_ *= dt_;
             }
             
             trajPosture_Cubic_->setCurrentTime(time_);
@@ -633,14 +712,14 @@ namespace RobotController{
 
             //////////////////   
             if ((!initial_calibration_update_) && (time_ - est_time_ > 0.5)){ //update calibration after controller runs
-                Fext_calibration_ = Fext_; //Fext is in LOCAL
+                Fext_calibration_ = Fext_; //Fext is in GLOBAL
                 initial_calibration_update_ = true;
                 cout << "initial ext_calibration_" << endl;
                 cout << Fext_calibration_.transpose() << endl;            
 
                 bool a[6] = {false};
                 for (int i=0; i<6; i++) {
-                    a[i] = Kf_gain_(i) * eeTask_->Kp()(i) < 1.0;
+                    a[i] = Dinv_gain_(i) * eeTask_->Kp()(i) < 1.0;
                 }                
                 cout << "Kf gain verification" << endl;
                 cout << a[0] << "   "  << a[1] << "   "  << a[2] << "   "  << a[3] << "   "  << a[4] << "   "  << a[5] << endl;                                                                                
@@ -650,24 +729,31 @@ namespace RobotController{
                 m_wMl = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                                                
                 m_wMl.translation() << 0.0, 0.0, 0.0;
                 
-                Force Fext_global, Fext_pin;
-                Fext_pin.linear() = (Fext_-Fext_calibration_).head(3);
-                Fext_pin.angular() = (Fext_-Fext_calibration_).tail(3);
-                Fext_global = m_wMl.act(Fext_pin);                                                                
+                Force Fext_global;
+                Fext_global = Fext_ - Fext_calibration_;
 
                 Vector3d offset_vec_global, offset_vec_local;
-                offset_vec_global(0) =  0.00005 * noise_elimination(Fext_global.angular()(2), 0.1);
-                offset_vec_global(1) =  0.00001 * noise_elimination(Fext_global.linear()(1), 1.0);
-                offset_vec_global(2) = -0.00001 * noise_elimination(Fext_global.angular()(0), 1.0);
+                // offset_vec_global(0) =  Dinv_gain_(5) * noise_elimination(Fext_global.angular()(2), 0.3) * 0.0;
+                // offset_vec_global(1) =  Dinv_gain_(1) * noise_elimination(Fext_global.linear()(1), 1.0) * 0.0;
+                // offset_vec_global(2) = -Dinv_gain_(3) * noise_elimination(Fext_global.angular()(0), 0.0);                
 
-                offset_vec_local = m_wMl.actInv(offset_vec_global); //global to local
+                offset_vec_global(0) =  Dinv_gain_(0) * noise_elimination(Fext_global.linear()(0), 1.0);
+                offset_vec_global(1) =  Dinv_gain_(1) * noise_elimination(Fext_global.linear()(1), 1.0);
+                offset_vec_global(2) =  Dinv_gain_(2) * noise_elimination(Fext_global.linear()(2), 1.0);      
+
+                offset_vec_local = m_wMl.actInv(offset_vec_global); //global to local                
                 
                 SE3 Fext_offset;
                 Fext_offset.setIdentity();
                 Fext_offset.translation() = offset_vec_local;  
                 //////////////////  
 
-                H_ee_ref_ = H_ee_ref_ * Fext_offset; //integration manner                                                             
+                H_ee_ref_ = H_ee_ref_ * Fext_offset; //integration manner                                                                                                                             
+                
+                ////////////////////////////////////////////////////////
+                // offset_vec_local.setZero();
+                // offset_vec_local(2) = Dinv_gain_(3) * noise_elimination((Fext_-Fext_calibration_)(3), 1.0);                
+                // H_ee_ref_.translation() += -offset_vec_local; //integration manner                                                                             
 
                 // // calibration update --> hard to use, if position is changed a lot, the use of f button strategy is better than calibration update
                 // if (fabs(Fext_offset.translation()(2)) < 1e-5) {
@@ -684,9 +770,68 @@ namespace RobotController{
 
             const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
-        }   
+        } 
 
-        if (ctrl_mode_ == 20){ //t //F_ext test
+        if (ctrl_mode_ == 22){ //v //impedance control
+            if (mode_change_){
+                //remove                
+                tsid_->removeTask("task-se3");
+                tsid_->removeTask("task-posture");
+                tsid_->removeTask("task-torque-bounds");
+
+                //add
+                tsid_->addMotionTask(*postureTask_, 1e-6, 1);
+                tsid_->addMotionTask(*torqueBoundsTask_, 1.0, 0);
+                tsid_->addMotionTask(*eeTask_, 1.0, 0);
+
+                //posture
+                trajPosture_Cubic_->setInitSample(state_.q_.tail(na_));
+                trajPosture_Cubic_->setDuration(2.0);
+                trajPosture_Cubic_->setStartTime(time_);
+                trajPosture_Cubic_->setGoalSample(q_ref_);
+
+                //ee
+                trajEE_Cubic_->setStartTime(time_);
+                trajEE_Cubic_->setDuration(2.0);
+                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                
+
+                trajEE_Cubic_->setInitSample(H_ee_ref_);
+                trajEE_Cubic_->setGoalSample(H_ee_ref_);
+               
+                reset_control_ = false;
+                mode_change_ = false;                                                
+            }
+            
+            trajPosture_Cubic_->setCurrentTime(time_);
+            samplePosture_ = trajPosture_Cubic_->computeNext();
+            postureTask_->setReference(samplePosture_);                        
+            
+            if (1) { 
+                //to make K(x-xd)=0, put xd=x 
+                H_ee_ref_.translation() = (robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_).translation();
+                
+                //inertia shaping    
+                // Me_inv_ = 
+                eeTask_->setDesiredinertia(Me_inv_);
+            }
+            else {   
+                //to make K(x-xd)=0, put K=0 
+                Vector6d a;
+                a = eeTask_->Kp();
+                a.head(3) << 0.0, 0.0, 0.0;
+                eeTask_->Kp(a); //after this task, Kp should be returned to original gain
+            }                        
+
+            SE3ToVector(H_ee_ref_, sampleEE_.pos);
+
+            eeTask_->setReference(sampleEE_);
+            //////////////////
+
+            const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
+            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
+        }    
+
+        if (ctrl_mode_ == 23){ //m //impedance control with K 
             if (mode_change_){
                 tsid_->removeTask("task-se3");
                 tsid_->removeTask("task-posture");
@@ -715,9 +860,10 @@ namespace RobotController{
             trajEE_Cubic_->setCurrentTime(time_);
             sampleEE_ = trajEE_Cubic_->computeNext();    
               
-            SE3 H_ee_ref;
-            H_ee_ref = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;
-            sampleEE_.pos.head(2) = H_ee_ref.translation().head(2);               
+            // SE3 H_ee_ref;
+            // H_ee_ref = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;
+            // sampleEE_.pos.head(2) = H_ee_ref.translation().head(2);               
+            // sampleEE_.pos.head(3) = H_ee_ref.translation().head(3);               
             
             eeTask_->setReference(sampleEE_);                        
 
@@ -725,7 +871,7 @@ namespace RobotController{
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));
         }
 
-        if (ctrl_mode_ == 31){ //u //move ee +0.1z
+        if (ctrl_mode_ == 31){ //i //move ee +0.1z
             if (mode_change_){
                 //remove                
                 tsid_->removeTask("task-se3");
@@ -809,7 +955,93 @@ namespace RobotController{
 
             const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
             state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));   
-        }   
+        }  
+
+        if (ctrl_mode_ == 33){ //l //move ee +0.1x
+            if (mode_change_){
+                //remove                
+                tsid_->removeTask("task-se3");
+                tsid_->removeTask("task-posture");
+                tsid_->removeTask("task-torque-bounds");
+
+                //add
+                tsid_->addMotionTask(*postureTask_, 1e-16, 1);
+                tsid_->addMotionTask(*torqueBoundsTask_, 1.0, 0);
+                tsid_->addMotionTask(*eeTask_, 1.0, 0);
+
+                //posture (try to maintain current joint configuration)
+                trajPosture_Cubic_->setInitSample(state_.q_.tail(na_));
+                trajPosture_Cubic_->setDuration(2.0);
+                trajPosture_Cubic_->setStartTime(time_);
+                trajPosture_Cubic_->setGoalSample(state_.q_.tail(na_));
+
+                //ee
+                trajEE_Cubic_->setStartTime(time_);
+                trajEE_Cubic_->setDuration(2.0);
+
+                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                                                
+                trajEE_Cubic_->setInitSample(H_ee_ref_);
+                H_ee_ref_.translation()(0) += 0.1;                
+                trajEE_Cubic_->setGoalSample(H_ee_ref_);
+
+                reset_control_ = false;
+                mode_change_ = false;                
+            }
+
+            trajPosture_Cubic_->setCurrentTime(time_);
+            samplePosture_ = trajPosture_Cubic_->computeNext();
+            postureTask_->setReference(samplePosture_);
+
+            trajEE_Cubic_->setCurrentTime(time_);
+            sampleEE_ = trajEE_Cubic_->computeNext();
+            eeTask_->setReference(sampleEE_);
+
+            const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
+            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));            
+        }
+
+        if (ctrl_mode_ == 34){ //j //move ee -0.1x
+            if (mode_change_){
+                //remove                
+                tsid_->removeTask("task-se3");
+                tsid_->removeTask("task-posture");
+                tsid_->removeTask("task-torque-bounds");
+
+                //add
+                tsid_->addMotionTask(*postureTask_, 1e-16, 1);
+                tsid_->addMotionTask(*torqueBoundsTask_, 1.0, 0);
+                tsid_->addMotionTask(*eeTask_, 1.0, 0);
+
+                //posture (try to maintain current joint configuration)
+                trajPosture_Cubic_->setInitSample(state_.q_.tail(na_));
+                trajPosture_Cubic_->setDuration(2.0);
+                trajPosture_Cubic_->setStartTime(time_);
+                trajPosture_Cubic_->setGoalSample(state_.q_.tail(na_));
+
+                //ee
+                trajEE_Cubic_->setStartTime(time_);
+                trajEE_Cubic_->setDuration(2.0);
+
+                H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                                                
+                trajEE_Cubic_->setInitSample(H_ee_ref_);
+                H_ee_ref_.translation()(0) -= 0.1;                
+                trajEE_Cubic_->setGoalSample(H_ee_ref_);
+
+                reset_control_ = false;
+                mode_change_ = false;                
+            }
+
+            trajPosture_Cubic_->setCurrentTime(time_);
+            samplePosture_ = trajPosture_Cubic_->computeNext();
+            postureTask_->setReference(samplePosture_);
+
+            trajEE_Cubic_->setCurrentTime(time_);
+            sampleEE_ = trajEE_Cubic_->computeNext();
+            eeTask_->setReference(sampleEE_);
+
+            const HQPData & HQPData = tsid_->computeProblemData(time_, state_.q_, state_.v_);
+            state_.torque_ = tsid_->getAccelerations(solver_->solve(HQPData));            
+        }
 
         if (ctrl_mode_ == 99){ //p //print current ee state
             if (mode_change_){
@@ -987,9 +1219,8 @@ namespace RobotController{
         g_global << 0.0, 0.0, 9.81;
         
         SE3 m_wMl;                
-        m_wMl = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;
-        m_wMl.translation() << 0.0, 0.0, 0.0; //transform only with rotation
-        
+        m_wMl = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;        
+        m_wMl.translation() << 0.0, 0.0, 0.0; //transform only with rotation                
         g_vec = m_wMl.actInv(g_global);
     }
 
@@ -1028,6 +1259,21 @@ namespace RobotController{
         robot_->frameJacobianTimeVariationLocal(data_, robot_->model().getFrameId("panda_joint7"), dJo2);        
         dJo = dJo2.bottomRightCorner(6, 7);
         dJo = Adj_mat_ * dJo;
+    }
+
+    void FrankaWrapper::MxLocal_offset(MatrixXd & Mx){
+        MatrixXd M, J, J_inverse, J_transpose_inverse;
+        this->mass(M);
+        this->JLocal_offset(J);
+        J_inverse = J.completeOrthogonalDecomposition().pseudoInverse();
+        J_transpose_inverse = J.transpose().completeOrthogonalDecomposition().pseudoInverse();        
+
+        Mx = J_transpose_inverse * M * J_inverse;    
+    }
+    
+
+    void FrankaWrapper::Fh_gain_matrix(MatrixXd & Fh){
+        Fh = Fh_;        
     }
 
     void FrankaWrapper::ee_state(Vector3d & pos, Eigen::Quaterniond & quat){
@@ -1084,6 +1330,10 @@ namespace RobotController{
 
     void FrankaWrapper::get_dt(double dt){
         dt_ = dt;
+    }
+
+    double FrankaWrapper::trajectory_length_in_time(){        
+        return  traj_length_in_time_;           
     }
 
     double FrankaWrapper::noise_elimination(double x, double limit) {

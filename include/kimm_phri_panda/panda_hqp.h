@@ -76,8 +76,7 @@ typedef struct SE3_Action{
 namespace RobotController{
     class FrankaWrapper{
         public: 
-            // FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node);
-            FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node, const int & ctrl_mode);
+            FrankaWrapper(const std::string & robot_node, const bool & issimulation, ros::NodeHandle & node);
             ~FrankaWrapper(){};
 
             void initialize();
@@ -114,6 +113,8 @@ namespace RobotController{
             void g(VectorXd & g_vec);
             void g_joint7(VectorXd & g_vec);
             void g_local_offset(VectorXd & g_vec);
+            void Fh_gain_matrix(MatrixXd & Fh);
+            void MxLocal_offset(MatrixXd & Mx);
 
             void ee_state(Vector3d & pos, Eigen::Quaterniond & quat);
 
@@ -124,6 +125,7 @@ namespace RobotController{
             MatrixXd skew_matrix(const VectorXd& vec);
             pinocchio::SE3 vel_to_SE3(VectorXd vel, double dt); 
             void get_dt(double dt);
+            double trajectory_length_in_time();
             double noise_elimination(double x, double limit);
 
             int ctrltype(){
@@ -148,12 +150,15 @@ namespace RobotController{
             int ctrl_mode_;
             Eigen::VectorXd q_ref_;
             pinocchio::SE3 H_ee_ref_, H_mobile_ref_, T_offset_, T_vel_;
-            Vector3d ee_offset_, obj_length_;
-            MatrixXd Adj_mat_, hGr_, hGr_Null_, hGr_pinv_, R_joint7_atHome_;
+            Vector3d ee_offset_, obj_length_global_, obj_length_local_;
+            MatrixXd Adj_mat_, hGr_local_, hGr_local_Null_, hGr_local_pinv_, R_joint7_atHome_;
             double est_time_, dt_;
             double joint7_to_finger_;
-            Vector6d Fext_, Fext_calibration_, Kf_gain_;
-            bool initial_calibration_update_;                            
+            Vector6d Fext_, Fext_calibration_, Dinv_gain_;
+            bool initial_calibration_update_, getcalibration_;     
+            MatrixXd Me_inv_, P_global_, P_local_, Fh_;       
+            ofstream fout_;  
+            double traj_length_in_time_;              
 
             //hqp
             std::shared_ptr<kimmhqp::robot::RobotWrapper> robot_;

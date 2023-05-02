@@ -30,18 +30,12 @@ git clone https://github.com/jspark861102/kimm_phri_panda.git
 ## 2. Run
 ### 2.1 Simulation
 ```bash
-# Simulation with PC Monitor
-roslaunch kimm_phri_panda ns0_simulation.launch
-
-# Simulation with 17inch Notebook
-roslaunch kimm_phri_panda ns0_simulation.launch note_book:=true
+# Simulation 
+roslaunch kimm_phri_panda ns0_phri_simulation.launch
 ```
 
 ### 2.1 Real Robot
 ```bash
-# 1. unknown object parameter estimation
-roslaunch kimm_phri_panda ns0_object_parameter_estimator.launch
-
-# 2. human-robot collaborative transportation and task
-roslaunch kimm_phri_panda ns0_real_robot.launch
+# object aware impedance controller for human-robot collaborative transportation
+roslaunch kimm_phri_panda ns0_phri_real.launch
 ```
