@@ -35,7 +35,7 @@ mujoco_ros_msgs::JointSet robot_command_msg_;
 geometry_msgs::Transform ee_state_msg_;
 sensor_msgs::JointState base_state_msg_;
 
-double mujoco_time_, time_, dt;
+double mujoco_time_, time_, dt, est_time_;
 bool isgrasp_;
 Eigen::VectorXd franka_qacc_, husky_qacc_, robot_nle_, robot_g_, franka_torque_, Fext_cali_;
 Eigen::MatrixXd robot_mass_, robot_J_local_, robot_dJ_local_, robot_J_world_;
@@ -62,7 +62,7 @@ EKF * ekf;
 Objdyn objdyn;
 
 bool isstartestimation_, isobjectdynamics_, isFextapplication_, isFextcalibration_;
-double n_param, m_FT;
+double n_param, m_FT, traj_length_in_time_;
 Eigen::MatrixXd A, H, Q, R, P;
 Eigen::VectorXd h, FT_measured, param, robot_g_local_, FT_object_, param_true_, Fext_global_;
 pinocchio::Motion vel_param, acc_param;

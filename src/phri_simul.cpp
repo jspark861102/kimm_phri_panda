@@ -20,6 +20,7 @@ int main(int argc, char **argv)
     ctrl_ = new RobotController::FrankaWrapper(group_name, true, n_node);
     ctrl_->initialize();
     ctrl_->get_dt(dt);
+    traj_length_in_time_ = ctrl_->trajectory_length_in_time();
     
     /////////////// mujoco sub : from mujoco to here ///////////////    
     ros::Subscriber jointState = n_node.subscribe("mujoco_ros/mujoco_ros_interface/joint_states", 5, &JointStateCallback, ros::TransportHints().tcpNoDelay(true));    
@@ -46,15 +47,17 @@ int main(int argc, char **argv)
     ee_state_msg_ = geometry_msgs::Transform();  // obtained from "robot_->position"
 
     sim_run_msg_.data = true;
-    isgrasp_ = false;
-    isstartestimation_ = false;
-    isFextapplication_ = false;
-    isFextcalibration_ = false;
+    isgrasp_ = false;        
 
     // InitMob();
 
     // ************ object estimation *************** //               
+    isstartestimation_ = false;
     getObjParam_init();
+    isFextapplication_ = false;
+    isobjectdynamics_ = false;
+    isFextcalibration_ = false;
+    est_time_ = 0.0;
     // ********************************************** //    
 
     while (ros::ok()){        
@@ -192,6 +195,22 @@ void vel_accel_pub(){
 }
 
 void FT_measured_pub() {
+    if (isstartestimation_) {
+        if (time_ - est_time_ < traj_length_in_time_) {            
+        }
+        else {
+            cout << "end estimation" << endl;
+            isstartestimation_ = false;
+            
+            cout << "estimated parameter" << endl;
+            cout << param.transpose() << endl;
+            
+            param.setZero();
+            ekf->init(time_, param);
+        }
+    }
+
+
     //actually, franka_torque_ is not a measured but command torque, because measurment is not available
     tau_estimated = robot_mass_ * ddq_mujoco + robot_nle_;        
     // tau_ext = franka_torque_ - tau_estimated;      // coincide with g(0,0,-9.81)  
@@ -571,14 +590,22 @@ void keyboard_event(){
                 break;   
             case 'q': //object estimation
                 if (isstartestimation_){
-                    cout << "end estimation" << endl;
-                    isstartestimation_ = false;
-                    param.setZero();
-                    ekf->init(time_, param);
+                    // cout << "end estimation" << endl;
+                    // isstartestimation_ = false;
+                    // param.setZero();
+                    // ekf->init(time_, param);
                 }
                 else{
                     cout << "start estimation" << endl;
                     isstartestimation_ = true; 
+
+                    est_time_ = time_;
+
+                    msg = 14;
+                    ctrl_->ctrl_update(msg);
+                    cout << " " << endl;
+                    cout << "null motion ee in -x axis for estimation" << endl;
+                    cout << " " << endl;
                 }
                 break;       
             case 'x': //object dynamics

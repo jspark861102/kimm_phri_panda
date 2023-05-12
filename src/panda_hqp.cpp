@@ -591,8 +591,8 @@ namespace RobotController{
                 // double angley = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
 
                 //to make global -x axis (5deg) & -y axis (5deg)
-                double anglex = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_)) -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
-                double angley = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_)) +5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
+                double anglex = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_)) -3*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
+                double angley = -5*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_)) +3*M_PI/180.0*2.0*M_PI*f*cos(2.0*M_PI*f*(time_ - est_time_));
 
 
                 VectorXd vel_vec, vel_vec_pseudo, vel_vec_null;
@@ -624,7 +624,7 @@ namespace RobotController{
                 }
             }
             else{                
-                // maintain current pos after the trajecto is finished --------------------------------//
+                // maintain current pos after the trajectory is finished --------------------------------//
                 // if (!trjectory_end_){
                 //     H_ee_ref_ = robot_->position(data_, robot_->model().getJointId("panda_joint7")) * T_offset_;                
                 //     SE3ToVector(H_ee_ref_, sampleEE_.pos); //main current pos
@@ -639,7 +639,7 @@ namespace RobotController{
                 // }             
                 // ------------------------------------------------------------------------------------//
                 
-                // maintain zero velocity after the trajecto is finished to avoid hard stop -----------//
+                // maintain zero velocity after the trajectory is finished to avoid hard stop -----------//
                 if (!trjectory_end_){                    
                     trjectory_end_ = true;
                     
